@@ -79,7 +79,7 @@ Les données sont téléchargées sur votre poste à la construction. Chaque sou
 - La recherche dans la doctrine est lexicale : elle peut manquer un document pertinent. Les skills demandent au modèle de lire l'article puis le BOFiP, mais un petit modèle peut ne pas suivre toutes les consignes.
 - Les tests ont porté sur des FEC pseudonymisés ou fictifs, sur un nombre limité de configurations.
 - **Confidentialité** : les serveurs lisent les FEC localement. Les tableaux de bord HTML chargent Chart.js depuis un CDN (le navigateur contacte ce site, sans y envoyer de données du FEC). Vérifier dans Hermes que les outils pouvant joindre Internet sont désactivés pour les dossiers clients, et que le modèle utilisé est bien local.
-- Ne jamais déposer de FEC réel dans ce dépôt.
+- Les FEC restent dans le dossier de travail de Hermes, hors du dépôt. Seul le fichier fictif de `exemples/` est publié. Le `.gitignore` bloque les noms de fichiers courants, mais pas un FEC renommé : vérifier avant tout `git add`.
 
 ## Licence
 
