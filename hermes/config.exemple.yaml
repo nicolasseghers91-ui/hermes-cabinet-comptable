@@ -1,0 +1,28 @@
+# Extraits a FUSIONNER dans le config.yaml de Hermes (Windows : %LOCALAPPDATA%\hermes\config.yaml).
+# Remplacer C:/CHEMIN/VERS par le dossier ou le depot est copie. Slashs obliques ou doubles antislashs.
+# Hermes ne recharge pas les serveurs MCP a chaud : le quitter completement (icone de la zone de
+# notification > Quitter), puis le relancer apres toute modification de ce fichier ou du code Python.
+
+mcp_servers:
+  analyse_comptable:      # controler_fec, tableau_de_bord, points_en_suspens, lister_fichiers_comptables
+    command: python
+    args: ["C:/CHEMIN/VERS/hermes-cabinet-comptable/analyse_comptable_mcp.py"]
+    timeout: 120
+    connect_timeout: 60
+    enabled: true
+  doctrine_fiscale:       # rechercher_doctrine, lire_document, rechercher_boss, rechercher_loi, lire_article, rechercher_norme, lire_norme
+    command: python
+    args: ["C:/CHEMIN/VERS/hermes-cabinet-comptable/doctrine_mcp.py", "serveur"]
+    timeout: 120
+    connect_timeout: 120
+
+skills:
+  external_dirs:          # competences (consignes d'usage des outils) lues par le modele
+    - "C:/CHEMIN/VERS/hermes-cabinet-comptable/hermes/skills"
+
+terminal:
+  cwd: "D:\\DOSSIER\\DE\\TRAVAIL"   # dossier de travail de Hermes : les FEC peuvent y etre deposes, et les mails
+                                   # (points en suspens) y sont ecrits. A defaut : sous-dossier « sorties » du depot.
+
+# Modele : n'importe quel serveur local compatible OpenAI avec appel d'outils et un contexte d'au moins 64 000 jetons
+# (Hermes refuse de demarrer en dessous). Exemple de configuration testee : Gemma 4 12B (QAT, Q4) via llama.cpp.
