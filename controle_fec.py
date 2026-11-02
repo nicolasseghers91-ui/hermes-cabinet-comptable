@@ -10,6 +10,7 @@ import glob
 import os
 import platform
 import re
+import unicodedata
 from decimal import Decimal, InvalidOperation
 
 ICI = os.path.dirname(os.path.abspath(__file__))
@@ -90,7 +91,7 @@ def lire_fec(chemin):
             continue
         try:
             lignes.append({
-                "j": val(brut, "journalcode"), "n": val(brut, "ecriturenum"),
+                "j": val(brut, "journalcode"), "jlib": val(brut, "journallib"), "n": val(brut, "ecriturenum"),
                 "date": date_de(val(brut, "ecrituredate")), "cpt": val(brut, "comptenum"),
                 "cptlib": val(brut, "comptelib"), "aux": val(brut, "compauxnum"),
                 "piece": val(brut, "pieceref"), "lib": val(brut, "ecriturelib"),
@@ -112,6 +113,16 @@ def lire_fec(chemin):
 TYPES_CONTROLES = {"bic": "BIC (SAS, SARL, EURL, EI)", "bnc": "BNC (professions liberales)", "sci_ir": "SCI a l'IR (revenus fonciers)",
                    "sci_is": "SCI a l'IS", "association": "association loi 1901", "esms": "association ESMS"}
 AN_JOURNAUX = {"AN", "RAN", "A-N", "ANO", "ANOUV", "A NOUVEAU", "ANX", "RAN1"}
+
+
+def est_an(l):
+    """Ligne d'a-nouveaux : code de journal connu (AN, RAN...) ou libelle du journal « A NOUVEAU » (journal code 00, par exemple)."""
+    if l["j"].strip().upper() in AN_JOURNAUX:
+        return True
+    lib = unicodedata.normalize("NFD", l.get("jlib") or "").encode("ascii", "ignore").decode().casefold()
+    return "nouveau" in lib
+
+
 CLOTURES = {"CLO", "CL", "CLOT", "CLOTURE", "CLÔTURE", "ODCL", "OD-CLO", "CLS"}
 
 
@@ -122,7 +133,7 @@ def controles_specifiques(typ, lignes):
     if typ not in TYPES_CONTROLES:
         return [], []
     ex = [l for l in lignes if not (l["j"].upper() in CLOTURES and l["cpt"][:1] in ("6", "7"))]
-    mv = [l for l in ex if l["j"].upper() not in AN_JOURNAUX]
+    mv = [l for l in ex if not est_an(l)]
 
     def solde(pref, src=ex, excl=()):
         return sum((l["d"] - l["c"] for l in src if l["cpt"].startswith(pref) and not l["cpt"].startswith(excl)), ZERO)

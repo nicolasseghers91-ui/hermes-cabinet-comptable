@@ -1,6 +1,7 @@
 # Journal des modifications
 
 ## 2026-11-02
+- Points en suspens : journal d'à-nouveaux reconnu aussi par son libellé (« A NOUVEAU », même avec le code 00) ; écritures de banque limitées aux comptes 511, 512, 514, 519 et 53 (les intérêts courus 518 n'en sont plus) ; nombres de lignes numériques dans le classeur Excel.
 - Points en suspens : l'auxiliaire « clients divers » (ou « div. ») est reconnu aussi lorsque son code est accolé (CLIENTDIVERS, CLIESPECES…).
 - Points en suspens : les à-nouveaux non lettrés ne sont plus repris (totalisés dans les notes). Côté clients, sont écartés les lignes en 411 sans auxiliaire et les comptes clients « espèces », « CB », « carte bleue », « chèques », « caisse » ou « clients divers » (compte général ou auxiliaire) ; avec un seul client, les clients ne sont pas contrôlés.
 - Points en suspens : contrôle refondu sur le lettrage. Seules les lignes non lettrées sont reprises, sans imputation sur les soldes ; les règlements sans facture sont les lignes non lettrées des écritures de banque ou de caisse (51, 53) ; un lettrage postérieur à la fin du FEC compte comme lettré (sauf `date_arrete` explicite). Avoirs, OD, à-nouveaux et lettrages partiels sont signalés dans les notes internes.

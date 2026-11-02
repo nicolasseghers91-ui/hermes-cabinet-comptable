@@ -18,6 +18,7 @@ ZERO = Decimal("0")
 CLIENTS = ("411", "413", "416")
 FOURNISSEURS = ("401", "404")
 ATTENTE = ("471", "472", "473")
+BANQUE = ("511", "512", "514", "519", "53")
 MAX_TEXTE = 20     # lignes par rubrique dans le texte renvoye au modele
 MAX_HTML = 300     # lignes par rubrique dans le fichier HTML
 
@@ -76,11 +77,12 @@ def compte_special(l):
 
 
 def ecritures_banque(lignes):
-    """Ecritures passees en banque ou en caisse : celles qui comportent une ligne sur un compte 51 ou 53 (hors a-nouveaux).
+    """Ecritures passees en banque ou en caisse : celles qui comportent une ligne sur un compte 511, 512, 514, 519 ou 53 (hors a-nouveaux ;
+    ni 518 interets courus, ni 58 virements internes).
     Renvoie (ensemble des cles d'ecriture, codes des journaux concernes)."""
     cles, journaux = set(), set()
     for l in lignes:
-        if l["cpt"].startswith(("51", "53")) and l["j"].strip().upper() not in cf.AN_JOURNAUX:
+        if l["cpt"].startswith(BANQUE) and not cf.est_an(l):
             cles.add(cf.cle_ecriture(l))
             journaux.add(l["j"])
     return cles, journaux
@@ -131,7 +133,7 @@ def points_tiers(lignes, prefixes, sens, arrete, limite, debut, mini, banque, re
             continue
         if m == 0:
             continue
-        if l["j"].strip().upper() in cf.AN_JOURNAUX:
+        if cf.est_an(l):
             info["an"][0] += 1
             info["an"][1] += abs(m)
             continue
@@ -288,7 +290,9 @@ def _feuille_xml(rows, largeurs):
             style = 0
             if isinstance(c, tuple):
                 c, style = c
-            if isinstance(c, Decimal):
+            if isinstance(c, int):
+                out.append(f'<c r="{ref}"><v>{c}</v></c>')
+            elif isinstance(c, Decimal):
                 out.append(f'<c r="{ref}" s="{style or 2}"><v>{c}</v></c>')
             elif c in ("", None):
                 continue
@@ -304,7 +308,7 @@ def ecrire_xlsx(chemin, rub, objet):
     feuilles = []
     synth = [[(objet, 3)], [], [("Rubrique", 1), ("Nombre de lignes", 1), ("Montant", 1)]]
     for s in rub:
-        synth.append([s["feuille"], str(len(s["lignes"])), sum(s["nums"], ZERO)])
+        synth.append([s["feuille"], len(s["lignes"]), sum(s["nums"], ZERO)])
     feuilles.append(("Synthèse", synth, [34, 18, 16]))
     for s in rub:
         rows = [[(c, 1) for c in s["cols"]]]
@@ -402,7 +406,7 @@ def generer(chemin, date_arrete=None, mois=3, nom_client=None, destinataire=None
     notes = [f"Base : FEC du {cf.jj(debut)} au {cf.jj(fin)}, état au {cf.jj(arrete)} ; sont repris les écritures NON LETTRÉES du FEC "
              + ("(lettrées après la date d'arrêté comprises) " if explicite else "(quelle que soit la date de lettrage) ")
              + f"; factures : ancienneté = date de la pièce, seuil {mois} mois (avant le {cf.jj(limite)}) ; "
-             f"règlements = lignes des écritures de banque ou de caisse (comptes 51 et 53 ; journaux : {', '.join(sorted(journaux_b)) or 'aucun'}) ; "
+             f"règlements = lignes des écritures de banque ou de caisse (comptes de banque 511, 512, 514, 519 et de caisse 53 ; journaux : {', '.join(sorted(journaux_b)) or 'aucun'}) ; "
              f"à-nouveaux et lignes inférieures à {cf.eur(mini)} ignorés ; opérations à justifier = comptes 471 à 473 non lettrés."]
     if inf_c["ignore"]:
         notes.append(f"Clients non contrôlés : {inf_c['ignore']} (pas de suivi par client dans ce dossier).")
