@@ -75,11 +75,11 @@ OUTILS = [
     {
         "name": "points_en_suspens",
         "description": (
-            "Prepare le MAIL de demande d'information au client a partir de son FEC (calcul exact par programme, sans toi) : "
+            "Prepare le MAIL de demande d'information / demande d'info au client a partir de son FEC (calcul exact par programme, sans toi ; ni destinataire ni objet a demander) : "
             "operations bancaires a justifier (comptes d'attente 471-473 = pieces manquantes), clients dont les factures sont impayees "
             "depuis plus de 3 mois, fournisseurs dont les factures ne sont pas reglees depuis plus de 3 mois, reglements de clients et de "
             "fournisseurs sans facture correspondante. Ecrit le mail (HTML a copier dans Outlook) ET un classeur Excel des memes listes, tries par ordre alphabetique, et renvoie un resume : ne cree jamais toi-meme de fichier Excel. A UTILISER pour « points en suspens », "
-            "« pieces manquantes », « relance », « clients / fournisseurs non payes », « mail de demande d'information ». "
+            "« pieces manquantes », « relance », « clients / fournisseurs non payes », « demande d'info », « demande d'informations », « mail de demande d'information », « mail au client », « demande de pieces ». "
             "SEUL « chemin » est utile (nom du fichier tel que l'utilisateur l'ecrit) ; les autres parametres sont facultatifs et ne se "
             "demandent pas. Si un fichier est joint a la conversation, NE LE LIS PAS et n'ecris pas de code. "
             "Le mail complet est ecrit dans un fichier HTML : reponds en quelques lignes avec le resume et le chemin du fichier, sans recopier le mail ; ne l'envoie pas."),

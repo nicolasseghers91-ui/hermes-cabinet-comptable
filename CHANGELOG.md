@@ -1,6 +1,7 @@
 # Journal des modifications
 
 ## 2026-11-02
+- Compétence et outil « points en suspens » : formulations ajoutées (« demande d'info », « mail au client », « demande de pièces », « relance ») pour que le modèle appelle l'outil au lieu de lire le FEC ou de rédiger un mail lui-même.
 - Points en suspens : les règlements sans facture répétés à l'identique (au moins 3 fois, même montant et même libellé) sont regroupés en une ligne ; les nombres de la synthèse comptent les règlements réels.
 - Points en suspens : journal d'à-nouveaux reconnu aussi par son libellé (« A NOUVEAU », même avec le code 00) ; écritures de banque limitées aux comptes 511, 512, 514, 519 et 53 (les intérêts courus 518 n'en sont plus) ; nombres de lignes numériques dans le classeur Excel.
 - Points en suspens : l'auxiliaire « clients divers » (ou « div. ») est reconnu aussi lorsque son code est accolé (CLIENTDIVERS, CLIESPECES…).
