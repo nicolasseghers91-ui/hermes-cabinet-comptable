@@ -6,6 +6,8 @@ import calendar
 import datetime
 import html
 import os
+import re
+import zipfile
 from decimal import Decimal
 
 import controle_fec as cf
@@ -124,33 +126,36 @@ def rubriques(ops, clients, fournisseurs, mois, sf_clients=(), sf_fournisseurs=(
                   "intro": "Nous n'avons pas pu rattacher les opérations bancaires suivantes à une facture ou à un justificatif :",
                   "cols": ["Date", "Libellé", "Sens", "Montant"],
                   "lignes": [[cf.jj(o["date"]), _cell(o["lib"]), o["sens"], cf.eur(o["montant"])] for o in ops],
+                  "nums": [o["montant"] for o in ops], "feuille": "Justificatifs manquants",
                   "fin": "Pourriez-vous nous transmettre les pièces correspondantes (facture, note de frais, contrat…) ou, à défaut, nous préciser la nature de ces opérations ?"})
-    for titre, items, intro, fin, nom, col in (
+    for titre, items, intro, fin, nom, feuille in (
             (f"Factures clients sans règlement depuis plus de {mois} mois", clients,
              f"Nous n'avons trouvé aucun règlement pour les factures clients suivantes, émises il y a plus de {mois} mois :",
              "Pour chacune, pourriez-vous nous dire si elle est toujours due (et si une relance est en cours), si elle a déjà été réglée (date et mode de règlement), si elle est contestée, ou si vous la considérez comme irrécouvrable ?",
-             "Client", "Facture"),
+             "Client", "Factures clients"),
             (f"Factures fournisseurs non réglées depuis plus de {mois} mois", fournisseurs,
              f"Nous n'avons trouvé aucun règlement pour les factures fournisseurs suivantes, datées de plus de {mois} mois :",
              "Pourriez-vous nous confirmer qu'elles restent à régler, ou nous indiquer la date et le mode de règlement si elles ont déjà été payées ? Si l'une d'elles est contestée ou doit donner lieu à un avoir, merci de nous le préciser.",
-             "Fournisseur", "Facture")):
+             "Fournisseur", "Factures fournisseurs")):
         if items:
             lignes = [[_cell(x["nom"]), _cell(ref, 40), d, cf.eur(m)] for x in items for d, ref, m in x["lignes"]]
             r.append({"titre": f"{titre} ({_pl(len(lignes), 'facture')}, {cf.eur(sum((x['montant'] for x in items), ZERO))})",
-                      "intro": intro, "cols": [nom, "N° de facture", "Date", "Reste dû"], "lignes": lignes, "fin": fin})
-    for titre, items, intro, fin, nom in (
+                      "intro": intro, "cols": [nom, "N° de facture", "Date", "Reste dû"], "lignes": lignes, "fin": fin,
+                      "nums": [m for x in items for _, _, m in x["lignes"]], "feuille": feuille})
+    for titre, items, intro, fin, nom, feuille in (
             (f"Règlements de clients sans facture correspondante, de plus de {mois} mois", sf_clients,
              f"Nous n'avons pas retrouvé de facture de vente correspondant aux règlements (ou avoirs) suivants, enregistrés il y a plus de {mois} mois :",
              "Pourriez-vous nous indiquer à quelle facture ils se rapportent ou, si cette facture n'est pas dans nos écritures, nous en transmettre une copie ? S'il s'agit d'un acompte ou d'un avoir, merci de nous le préciser.",
-             "Client"),
+             "Client", "Règlements clients"),
             ("Règlements de fournisseurs sans facture correspondante", sf_fournisseurs,
              "Nous n'avons pas retrouvé de facture d'achat correspondant aux règlements (ou avoirs) suivants, quelle que soit leur date :",
              "Pourriez-vous nous transmettre les factures correspondantes ou, s'il s'agit d'un acompte, d'un remboursement ou d'un avoir, nous le préciser ?",
-             "Fournisseur")):
+             "Fournisseur", "Règlements fournisseurs")):
         if items:
             lignes = [[_cell(x["nom"]), d, _cell(lib, 40), cf.eur(m)] for x in items for d, lib, m in x["lignes"]]
             r.append({"titre": f"{titre} ({_pl(len(lignes), 'règlement')}, {cf.eur(sum((x['montant'] for x in items), ZERO))})",
-                      "intro": intro, "cols": [nom, "Date", "Libellé", "Montant"], "lignes": lignes, "fin": fin})
+                      "intro": intro, "cols": [nom, "Date", "Libellé", "Montant"], "lignes": lignes, "fin": fin,
+                      "nums": [m for x in items for _, _, m in x["lignes"]], "feuille": feuille})
     return r
 
 
@@ -199,7 +204,96 @@ def mail_html(rub, objet, salut, delai, signataire, intro):
     return "".join(p)
 
 
-def generer(chemin, date_arrete=None, mois=3, nom_client=None, destinataire=None, signataire=None, delai=None, montant_min=10, afficher_mail=False):
+def _col(n):
+    s = ""
+    n += 1
+    while n:
+        n, r = divmod(n - 1, 26)
+        s = chr(65 + r) + s
+    return s
+
+
+def _x(s):
+    s = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", str(s))
+    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _feuille_xml(rows, largeurs):
+    """rows : liste de lignes ; cellule = texte, Decimal (montant) ou (texte, style) ; styles : 1 en-tete, 2 montant, 3 gras, 4 montant gras."""
+    out = ['<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">']
+    out.append('<sheetViews><sheetView workbookViewId="0">' + ('<pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/>' if len(rows) > 1 else '') + '</sheetView></sheetViews>')
+    out.append("<cols>" + "".join(f'<col min="{i + 1}" max="{i + 1}" width="{w}" customWidth="1"/>' for i, w in enumerate(largeurs)) + "</cols><sheetData>")
+    for n, ligne in enumerate(rows, 1):
+        out.append(f'<row r="{n}">')
+        for j, c in enumerate(ligne):
+            ref = f"{_col(j)}{n}"
+            style = 0
+            if isinstance(c, tuple):
+                c, style = c
+            if isinstance(c, Decimal):
+                out.append(f'<c r="{ref}" s="{style or 2}"><v>{c}</v></c>')
+            elif c in ("", None):
+                continue
+            else:
+                out.append(f'<c r="{ref}" t="inlineStr"' + (f' s="{style}"' if style else "") + f'><is><t xml:space="preserve">{_x(c)}</t></is></c>')
+        out.append("</row>")
+    out.append("</sheetData></worksheet>")
+    return "".join(out)
+
+
+def ecrire_xlsx(chemin, rub, objet):
+    """Classeur Excel (sans bibliotheque externe) : une feuille de synthese puis une feuille par rubrique."""
+    feuilles = []
+    synth = [[(objet, 3)], [], [("Rubrique", 1), ("Nombre de lignes", 1), ("Montant", 1)]]
+    for s in rub:
+        synth.append([s["feuille"], str(len(s["lignes"])), sum(s["nums"], ZERO)])
+    feuilles.append(("Synthèse", synth, [34, 18, 16]))
+    for s in rub:
+        rows = [[(c, 1) for c in s["cols"]]]
+        for ligne, m in zip(s["lignes"], s["nums"]):
+            rows.append(list(ligne[:-1]) + [m])
+        rows.append(["Total"] + [""] * (len(s["cols"]) - 2) + [(sum(s["nums"], ZERO), 4)])
+        rows[-1][0] = ("Total", 3)
+        feuilles.append((s["feuille"], rows, [34, 40, 22, 16] if len(s["cols"]) == 4 else [24] * len(s["cols"])))
+    ct = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+          '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>'
+          '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
+          '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>'
+          + "".join(f'<Override PartName="/xl/worksheets/sheet{i}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+                    for i in range(1, len(feuilles) + 1)) + "</Types>")
+    rels = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>')
+    wb = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+          'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>'
+          + "".join(f'<sheet name="{_x(nom)[:31]}" sheetId="{i}" r:id="rId{i}"/>' for i, (nom, _, _) in enumerate(feuilles, 1)) + "</sheets></workbook>")
+    wbrels = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+              + "".join(f'<Relationship Id="rId{i}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet{i}.xml"/>'
+                        for i in range(1, len(feuilles) + 1))
+              + f'<Relationship Id="rId{len(feuilles) + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>')
+    styles = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+              '<numFmts count="1"><numFmt numFmtId="164" formatCode="#,##0.00\\ &quot;€&quot;"/></numFmts>'
+              '<fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts>'
+              '<fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>'
+              '<fill><patternFill patternType="solid"><fgColor rgb="FFEEEEEE"/></patternFill></fill></fills>'
+              '<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>'
+              '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
+              '<cellXfs count="5"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'
+              '<xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/>'
+              '<xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>'
+              '<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>'
+              '<xf numFmtId="164" fontId="1" fillId="0" borderId="0" xfId="0" applyNumberFormat="1" applyFont="1"/></cellXfs>'
+              '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>')
+    with zipfile.ZipFile(chemin, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("[Content_Types].xml", ct)
+        z.writestr("_rels/.rels", rels)
+        z.writestr("xl/workbook.xml", wb)
+        z.writestr("xl/_rels/workbook.xml.rels", wbrels)
+        z.writestr("xl/styles.xml", styles)
+        for i, (_, rows, larg) in enumerate(feuilles, 1):
+            z.writestr(f"xl/worksheets/sheet{i}.xml", _feuille_xml(rows, larg))
+
+
+def generer(chemin, date_arrete=None, mois=3, nom_client=None, destinataire=None, signataire=None, delai=None, montant_min=10, afficher_mail=False, format_sortie="mail"):
     lignes, illisibles = cf.lire_fec(chemin)
     dates = [l["date"] for l in lignes if l["date"]]
     debut, fin = min(dates), max(dates)
@@ -230,7 +324,8 @@ def generer(chemin, date_arrete=None, mois=3, nom_client=None, destinataire=None
     signataire = signataire or "[Votre nom]"
     intro = intro_mail(arrete)
     texte = mail_texte(rub, objet, salut, delai, signataire, intro)
-    nom = "points_en_suspens_" + "".join(c if c.isalnum() else "_" for c in (nom_client or "dossier"))[:30] + f"_{arrete:%Y%m%d}.html"
+    excel = "xls" in str(format_sortie or "").lower() or "excel" in str(format_sortie or "").lower()
+    nom = "points_en_suspens_" + "".join(c if c.isalnum() else "_" for c in (nom_client or "dossier"))[:30] + f"_{arrete:%Y%m%d}" + (".xlsx" if excel else ".html")
     sortie = None
     for dossier in (cf.dossier_hermes(), os.path.join(ICI, "sorties")):   # d'abord le dossier choisi dans Hermes
         if not dossier:
@@ -238,8 +333,11 @@ def generer(chemin, date_arrete=None, mois=3, nom_client=None, destinataire=None
         try:
             os.makedirs(dossier, exist_ok=True)
             sortie = os.path.join(dossier, nom)
-            with open(sortie, "w", encoding="utf-8") as f:
-                f.write(mail_html(rub, objet, salut, delai, signataire, intro))
+            if excel:
+                ecrire_xlsx(sortie, rub, objet)
+            else:
+                with open(sortie, "w", encoding="utf-8") as f:
+                    f.write(mail_html(rub, objet, salut, delai, signataire, intro))
             break
         except OSError:
             sortie = None
@@ -252,22 +350,23 @@ def generer(chemin, date_arrete=None, mois=3, nom_client=None, destinataire=None
     if petits:
         notes.append(f"{len(petits)} tiers de moins de {cf.eur(mini)} non repris dans le mail ({cf.eur(sum((x['montant'] for x in petits), ZERO))} au total) ; les restes de facture inférieurs à ce montant sont ignorés.")
     if sf_c or sf_f:
-        notes.append("À vérifier en interne avant envoi : les règlements sans facture repris dans le mail ne sont peut-être que des lettrages manquants.")
+        notes.append("À vérifier en interne avant envoi : les règlements sans facture repris ci-dessus ne sont peut-être que des lettrages manquants.")
     reste_c = sum((x[1] for x in na_c), ZERO) - sum((x["montant"] for x in sf_c), ZERO)
     reste_f = sum((x[1] for x in na_f), ZERO) - sum((x["montant"] for x in sf_f), ZERO)
     if reste_c > 0:
-        notes.append(f"Règlements/avoirs de clients sans facture non repris dans le mail (moins de {mois} mois ou inférieurs à {cf.eur(mini)}) : {cf.eur(reste_c)}.")
+        notes.append(f"Règlements/avoirs de clients sans facture non repris (moins de {mois} mois ou inférieurs à {cf.eur(mini)}) : {cf.eur(reste_c)}.")
     if reste_f > 0:
-        notes.append(f"Règlements/avoirs de fournisseurs sans facture non repris dans le mail (inférieurs à {cf.eur(mini)}) : {cf.eur(reste_f)}.")
+        notes.append(f"Règlements/avoirs de fournisseurs sans facture non repris (inférieurs à {cf.eur(mini)}) : {cf.eur(reste_f)}.")
     if ind_c or ind_f:
         notes.append(f"Report à nouveau récent non évalué (ancienneté inconnue) : clients {cf.eur(ind_c)}, fournisseurs {cf.eur(ind_f)}.")
     if illisibles:
         notes.append(f"({illisibles} ligne(s) du FEC illisible(s), ignorée(s).)")
-    notes.append(f"Mail complet à copier dans Outlook (à ouvrir dans le navigateur) : {cf.vers_affichage(sortie)}")
-    if afficher_mail:
+    notes.append((f"Fichier Excel (une feuille par rubrique) : {cf.vers_affichage(sortie)}" if excel else
+                  f"Mail complet à copier dans Outlook (à ouvrir dans le navigateur) : {cf.vers_affichage(sortie)}"))
+    if afficher_mail and not excel:
         notes.append("Restitue ce mail tel quel : ne modifie aucun montant ni aucun nom, ne l'envoie pas ; l'utilisateur le relit puis l'envoie.")
         return texte + "\n\n---\n" + "\n".join(notes), sortie
-    resume = [f"Mail de points en suspens prêt (arrêté au {cf.jj(arrete)}) :"]
+    resume = [("Points en suspens prêts, au format Excel" if excel else "Mail de points en suspens prêt") + f" (arrêté au {cf.jj(arrete)}) :"]
     if ops:
         resume.append(f"- Justificatifs manquants : {_pl(len(ops), 'opération')} à justifier, {cf.eur(sum((o['montant'] for o in ops), ZERO))}.")
     for nom_r, items, tiers, mot, delai_r in (("Factures clients sans règlement", clients, "client", "facture", f" depuis plus de {mois} mois"),
@@ -279,6 +378,6 @@ def generer(chemin, date_arrete=None, mois=3, nom_client=None, destinataire=None
             resume.append(f"- {nom_r}{delai_r} : {_pl(n, mot)} ({_pl(len(items), tiers)}), "
                           f"{cf.eur(sum((x['montant'] for x in items), ZERO))}.")
     consigne = ("Réponds en 3 ou 4 lignes : reprends ce résumé, indique le fichier à ouvrir et, s'il y en a, la mention « à vérifier en interne » si elle figure dans les notes. "
-                "NE recopie PAS le mail et n'écris aucun tableau : il est dans le fichier. Ne l'envoie pas. "
-                "Si l'utilisateur veut lire le mail dans la conversation, relance l'outil avec afficher_mail=oui.")
+                "NE recopie PAS le contenu et n'écris aucun tableau : il est dans le fichier. Ne l'envoie pas. "
+                + ("" if excel else "Si l'utilisateur veut lire le mail dans la conversation, relance l'outil avec afficher_mail=oui."))
     return "\n".join(resume) + "\n\n---\n" + "\n".join(notes) + "\n" + consigne, sortie

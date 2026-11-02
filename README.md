@@ -11,13 +11,14 @@ Outils **100 % locaux** pour un cabinet d'expertise comptable, branchés sur un 
 | `analyse_comptable_mcp.py` | Serveur MCP « analyse comptable » : `controler_fec`, `tableau_de_bord`, `points_en_suspens`, `lister_fichiers_comptables` |
 | `controle_fec.py` | Lecture et contrôles d'un FEC : équilibre à une date d'arrêt, écritures déséquilibrées, doublons, dates hors exercice, soldes de sens inhabituel, comptes d'attente, lettrage, écritures non validées, contrôles propres au type de dossier |
 | `tableau_bord.py`, `tdb_types.py` | Tableaux de bord HTML (N et N-1) : `bic`, `bnc`, `sci_ir`, `sci_is`, `association`, `esms` |
-| `points_suspens.py` | Mail de demande d'information au client (voir plus bas) |
+| `points_suspens.py` | Mail de demande d'information au client, en HTML ou en classeur Excel (voir plus bas) |
 | `doctrine_mcp.py` | Serveur MCP « doctrine fiscale » : `rechercher_doctrine`, `lire_document` (BOFiP), `rechercher_boss`, `rechercher_loi`, `lire_article` (codes), `rechercher_norme`, `lire_norme` (PCG, recueil ANC) |
 | `legislation.py`, `boss.py`, `normes.py` | Index et recherche : codes consolidés (CGI, LPF, CIBS, Code de commerce, Code civil, CMF, Code du travail, CSS), BOSS, normes ANC |
 | `build_normes.py` | Construit `normes.sqlite` à partir des PDF de l'ANC |
 | `hermes/skills/` | Consignes d'usage des outils pour le modèle (`fec-comptable`, `doctrine-fiscale`) |
 | `hermes/config.exemple.yaml` | Extrait de configuration Hermes à fusionner |
 | `*.bat`, `planifier_mises_a_jour.ps1` | Construction et mise à jour des données, tâche planifiée Windows, tests |
+| `hooks/` | Garde-fou anti-FEC à activer avant de modifier le dépôt (voir « Contribuer en sécurité ») |
 | `exemples/` | FEC fictif pour essayer `points_en_suspens` (volontairement non équilibré) |
 | `outils_test/` | Générateurs de FEC fictifs pour tester les contrôles et les tableaux de bord |
 
@@ -53,7 +54,7 @@ Dans Hermes, déposer le FEC dans le dossier de travail, puis par exemple :
 
 - « Contrôle le FEC_2026.txt » (ajouter la nature du dossier pour les contrôles spécifiques).
 - « Fais le tableau de bord du FEC_2026.txt, c'est une SARL » → page HTML.
-- « Prépare le mail de points en suspens du FEC_2026.txt » → fichier HTML à copier dans Outlook ; le modèle n'en donne qu'un résumé.
+- « Prépare le mail de points en suspens du FEC_2026.txt » → fichier HTML à copier dans Outlook ; le modèle n'en donne qu'un résumé. Ajouter « en Excel » pour obtenir à la place un classeur (une feuille par rubrique).
 - « Une société à l'IS peut-elle bénéficier de l'exonération du 151 septies du CGI ? » → lecture de l'article puis du BOFiP.
 
 ### Points en suspens : règles de calcul
@@ -63,6 +64,10 @@ Dans Hermes, déposer le FEC dans le dossier de travail, puis par exemple :
 - Opérations à justifier : écritures non lettrées des comptes d'attente 471 à 473 (hypothèse de travail à confirmer pour chaque cabinet).
 - Restes inférieurs à 10 € ignorés (`montant_min`). Report à nouveau : ancienneté inconnue, indiquée « avant le début d'exercice ».
 - Le mail porte les noms comptables du FEC : à relire avant envoi, le lettrage manquant pouvant expliquer certains points.
+
+## Contribuer en sécurité
+
+Avant toute modification du dépôt, activer le garde-fou : `git config core.hooksPath hooks`. Il refuse un commit contenant un fichier dont l'en-tête ressemble à celui d'un FEC (même renommé), une base, une archive, un export Excel ou un mail généré. Il ne protège que les copies où il est activé et se contourne avec `--no-verify` : il complète la vigilance, il ne la remplace pas.
 
 ## Sources des données (non redistribuées)
 

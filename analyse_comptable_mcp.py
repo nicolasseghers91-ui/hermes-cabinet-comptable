@@ -94,6 +94,7 @@ OUTILS = [
                 "signataire": {"type": ["string", "null"], "description": "Facultatif : nom de l'expediteur (signature)"},
                 "delai": {"type": ["string", "null"], "description": "Facultatif : date limite de reponse JJ/MM/AAAA"},
                 "montant_min": {"type": ["number", "string", "null"], "description": "Facultatif : montant en euros en dessous duquel un tiers n'est pas repris (defaut 10)"},
+                "format": {"type": ["string", "null"], "description": "Facultatif : « excel » seulement si l'utilisateur veut un fichier Excel au lieu du mail"},
                 "afficher_mail": {"type": ["string", "boolean", "null"], "description": "Facultatif, laisser vide : mettre « oui » seulement si l'utilisateur demande a lire le mail dans la conversation (sinon le mail est dans le fichier HTML)"},
             },
         },
@@ -158,7 +159,8 @@ def appeler_outil(nom, a):
         texte, _ = points_suspens.generer(
             controle_fec.resoudre_chemin(a["chemin"]), vide(a.get("date_arrete")), vide(a.get("mois")) or 3,
             vide(a.get("nom_client")), vide(a.get("destinataire")), vide(a.get("signataire")), vide(a.get("delai")),
-            vide(a.get("montant_min")) or 10, str(a.get("afficher_mail") or "").strip().lower() in ("oui", "true", "1", "vrai", "yes"))
+            vide(a.get("montant_min")) or 10, str(a.get("afficher_mail") or "").strip().lower() in ("oui", "true", "1", "vrai", "yes"),
+            vide(a.get("format")) or "mail")
         return texte
     if nom == "tableau_de_bord":
         if not str(a.get("chemin") or "").strip():

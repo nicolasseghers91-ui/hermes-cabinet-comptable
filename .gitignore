@@ -9,6 +9,8 @@ FEC*.txt
 # Sorties generees
 sorties/
 points_en_suspens_*.html
+*.xlsx
+*.xls
 TDB_*.html
 journal_*.log
 journal_tests.txt
