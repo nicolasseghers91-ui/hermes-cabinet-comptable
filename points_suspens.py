@@ -54,7 +54,8 @@ def date_age(l, arrete):
 MOYENS = re.compile(r"\b(?:cb|c b|cartes? (?:bleue?s?|bancaires?)|especes?|cheques?|caisse)\b")
 
 
-DIVERS = re.compile(r"\bdivers\b")
+DIVERS = re.compile(r"\b(?:divers|div)\b")
+CODES = re.compile(r"especes?|cheques?|caisse|cartebleue?|cartebancaire")   # codes colles : CLIENTESPECES, CARTEBLEUE...
 
 
 def sans_tiers(l):
@@ -69,7 +70,9 @@ def compte_special(l):
     divers » regroupant de vrais clients ne doit pas tout ecarter."""
     general = cle_alpha(l["cpt"] + " " + l["cptlib"])[0]
     aux = cle_alpha(l.get("auxlib") or l["aux"])[0]
-    return bool(MOYENS.search(general) or MOYENS.search(aux) or DIVERS.search(aux) or (sans_tiers(l) and DIVERS.search(general)))
+    code_g, code_a = cle_alpha(l["cpt"])[0].replace(" ", ""), cle_alpha(l["aux"])[0].replace(" ", "")
+    return bool(MOYENS.search(general) or MOYENS.search(aux) or DIVERS.search(aux) or CODES.search(code_g) or CODES.search(code_a)
+                or "divers" in code_a or (sans_tiers(l) and (DIVERS.search(general) or "divers" in code_g)))
 
 
 def ecritures_banque(lignes):
@@ -115,7 +118,7 @@ def points_tiers(lignes, prefixes, sens, arrete, limite, debut, mini, banque, re
         nom = l.get("auxlib") or l["cptlib"] or l["aux"] or l["cpt"]
         if clients:
             if compte_special(l):
-                info["exclus"].add(l.get("auxlib") or l["cptlib"] or l["aux"] or l["cpt"])
+                info["exclus"].add(l.get("auxlib") or l["aux"] or l["cptlib"] or l["cpt"])
                 continue
             if sans_tiers(l):
                 info["sans_aux"] += 1
