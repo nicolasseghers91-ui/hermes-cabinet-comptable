@@ -7,6 +7,7 @@ import datetime
 import html
 import os
 import re
+import unicodedata
 import zipfile
 from decimal import Decimal
 
@@ -19,6 +20,12 @@ FOURNISSEURS = ("401", "404")
 ATTENTE = ("471", "472", "473")
 MAX_TEXTE = 20     # lignes par rubrique dans le texte renvoye au modele
 MAX_HTML = 300     # lignes par rubrique dans le fichier HTML
+
+
+def cle_alpha(nom):
+    """Cle de tri alphabetique : sans accents, sans casse, sans signes."""
+    s = unicodedata.normalize("NFD", str(nom or "")).encode("ascii", "ignore").decode().casefold()
+    return re.sub(r"[^a-z0-9]+", " ", s).strip(), str(nom or "")
 
 
 def moins_mois(d, n):
@@ -91,8 +98,8 @@ def tiers_en_retard(lignes, prefixes, sens, arrete, limite, debut, mini=ZERO, sf
             res.append({"nom": t["nom"], "nb": len(anciennes), "montant": sum((x[2] for x in anciennes), ZERO),
                         "lignes": [(("avant le " + cf.jj(debut)) if x[1] else cf.jj(x[0]), x[3] or "(sans référence)", x[2])
                                    for x in anciennes]})
-    res.sort(key=lambda x: -x["montant"])
-    sans_facture.sort(key=lambda x: -x["montant"])
+    res.sort(key=lambda x: cle_alpha(x["nom"]))
+    sans_facture.sort(key=lambda x: cle_alpha(x["nom"]))
     return res, non_affectes, indetermine, sans_facture
 
 
@@ -293,7 +300,7 @@ def ecrire_xlsx(chemin, rub, objet):
             z.writestr(f"xl/worksheets/sheet{i}.xml", _feuille_xml(rows, larg))
 
 
-def generer(chemin, date_arrete=None, mois=3, nom_client=None, destinataire=None, signataire=None, delai=None, montant_min=10, afficher_mail=False, format_sortie="mail"):
+def generer(chemin, date_arrete=None, mois=3, nom_client=None, destinataire=None, signataire=None, delai=None, montant_min=10, afficher_mail=False, format_sortie=None):   # format_sortie : ignore, conserve pour compatibilite
     lignes, illisibles = cf.lire_fec(chemin)
     dates = [l["date"] for l in lignes if l["date"]]
     debut, fin = min(dates), max(dates)
@@ -324,23 +331,21 @@ def generer(chemin, date_arrete=None, mois=3, nom_client=None, destinataire=None
     signataire = signataire or "[Votre nom]"
     intro = intro_mail(arrete)
     texte = mail_texte(rub, objet, salut, delai, signataire, intro)
-    excel = "xls" in str(format_sortie or "").lower() or "excel" in str(format_sortie or "").lower()
-    nom = "points_en_suspens_" + "".join(c if c.isalnum() else "_" for c in (nom_client or "dossier"))[:30] + f"_{arrete:%Y%m%d}" + (".xlsx" if excel else ".html")
-    sortie = None
+    base = "points_en_suspens_" + "".join(c if c.isalnum() else "_" for c in (nom_client or "dossier"))[:30] + f"_{arrete:%Y%m%d}"
+    sortie = sortie_x = None
     for dossier in (cf.dossier_hermes(), os.path.join(ICI, "sorties")):   # d'abord le dossier choisi dans Hermes
         if not dossier:
             continue
         try:
             os.makedirs(dossier, exist_ok=True)
-            sortie = os.path.join(dossier, nom)
-            if excel:
-                ecrire_xlsx(sortie, rub, objet)
-            else:
-                with open(sortie, "w", encoding="utf-8") as f:
-                    f.write(mail_html(rub, objet, salut, delai, signataire, intro))
+            sortie = os.path.join(dossier, base + ".html")
+            sortie_x = os.path.join(dossier, base + ".xlsx")
+            with open(sortie, "w", encoding="utf-8") as f:
+                f.write(mail_html(rub, objet, salut, delai, signataire, intro))
+            ecrire_xlsx(sortie_x, rub, objet)
             break
         except OSError:
-            sortie = None
+            sortie = sortie_x = None
     if not sortie:
         raise ValueError("impossible d'ecrire le fichier du mail (dossier de travail Hermes et dossier « sorties » inaccessibles).")
     notes = [f"Base : FEC du {cf.jj(debut)} au {cf.jj(fin)}, points arrêtés au {cf.jj(arrete)} ; ancienneté = date de la pièce, "
@@ -361,12 +366,12 @@ def generer(chemin, date_arrete=None, mois=3, nom_client=None, destinataire=None
         notes.append(f"Report à nouveau récent non évalué (ancienneté inconnue) : clients {cf.eur(ind_c)}, fournisseurs {cf.eur(ind_f)}.")
     if illisibles:
         notes.append(f"({illisibles} ligne(s) du FEC illisible(s), ignorée(s).)")
-    notes.append((f"Fichier Excel (une feuille par rubrique) : {cf.vers_affichage(sortie)}" if excel else
-                  f"Mail complet à copier dans Outlook (à ouvrir dans le navigateur) : {cf.vers_affichage(sortie)}"))
-    if afficher_mail and not excel:
+    notes.append(f"Mail complet à copier dans Outlook (à ouvrir dans le navigateur) : {cf.vers_affichage(sortie)}")
+    notes.append(f"Classeur Excel avec les mêmes listes (une feuille par rubrique) : {cf.vers_affichage(sortie_x)}")
+    if afficher_mail:
         notes.append("Restitue ce mail tel quel : ne modifie aucun montant ni aucun nom, ne l'envoie pas ; l'utilisateur le relit puis l'envoie.")
         return texte + "\n\n---\n" + "\n".join(notes), sortie
-    resume = [("Points en suspens prêts, au format Excel" if excel else "Mail de points en suspens prêt") + f" (arrêté au {cf.jj(arrete)}) :"]
+    resume = [f"Mail de points en suspens prêt (arrêté au {cf.jj(arrete)}) :"]
     if ops:
         resume.append(f"- Justificatifs manquants : {_pl(len(ops), 'opération')} à justifier, {cf.eur(sum((o['montant'] for o in ops), ZERO))}.")
     for nom_r, items, tiers, mot, delai_r in (("Factures clients sans règlement", clients, "client", "facture", f" depuis plus de {mois} mois"),
@@ -377,7 +382,7 @@ def generer(chemin, date_arrete=None, mois=3, nom_client=None, destinataire=None
             n = sum(len(x["lignes"]) for x in items)
             resume.append(f"- {nom_r}{delai_r} : {_pl(n, mot)} ({_pl(len(items), tiers)}), "
                           f"{cf.eur(sum((x['montant'] for x in items), ZERO))}.")
-    consigne = ("Réponds en 3 ou 4 lignes : reprends ce résumé, indique le fichier à ouvrir et, s'il y en a, la mention « à vérifier en interne » si elle figure dans les notes. "
-                "NE recopie PAS le contenu et n'écris aucun tableau : il est dans le fichier. Ne l'envoie pas. "
-                + ("" if excel else "Si l'utilisateur veut lire le mail dans la conversation, relance l'outil avec afficher_mail=oui."))
+    consigne = ("Réponds en 3 ou 4 lignes : reprends ce résumé, indique les deux fichiers (mail HTML, classeur Excel) et, s'il y en a, la mention « à vérifier en interne » si elle figure dans les notes. "
+                "NE recopie PAS le contenu et n'écris aucun tableau : tout est dans les fichiers. Le classeur Excel EXISTE DEJA : n'en crée pas toi-même, ne lis pas le HTML. Ne l'envoie pas. "
+                "Si l'utilisateur veut lire le mail dans la conversation, relance l'outil avec afficher_mail=oui.")
     return "\n".join(resume) + "\n\n---\n" + "\n".join(notes) + "\n" + consigne, sortie

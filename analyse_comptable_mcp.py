@@ -78,7 +78,7 @@ OUTILS = [
             "Prepare le MAIL de demande d'information au client a partir de son FEC (calcul exact par programme, sans toi) : "
             "operations bancaires a justifier (comptes d'attente 471-473 = pieces manquantes), clients dont les factures sont impayees "
             "depuis plus de 3 mois, fournisseurs dont les factures ne sont pas reglees depuis plus de 3 mois, reglements de clients et de "
-            "fournisseurs sans facture correspondante. Ecrit le mail complet dans un fichier HTML a copier dans Outlook et renvoie un resume. A UTILISER pour « points en suspens », "
+            "fournisseurs sans facture correspondante. Ecrit le mail (HTML a copier dans Outlook) ET un classeur Excel des memes listes, tries par ordre alphabetique, et renvoie un resume : ne cree jamais toi-meme de fichier Excel. A UTILISER pour « points en suspens », "
             "« pieces manquantes », « relance », « clients / fournisseurs non payes », « mail de demande d'information ». "
             "SEUL « chemin » est utile (nom du fichier tel que l'utilisateur l'ecrit) ; les autres parametres sont facultatifs et ne se "
             "demandent pas. Si un fichier est joint a la conversation, NE LE LIS PAS et n'ecris pas de code. "
@@ -94,7 +94,6 @@ OUTILS = [
                 "signataire": {"type": ["string", "null"], "description": "Facultatif : nom de l'expediteur (signature)"},
                 "delai": {"type": ["string", "null"], "description": "Facultatif : date limite de reponse JJ/MM/AAAA"},
                 "montant_min": {"type": ["number", "string", "null"], "description": "Facultatif : montant en euros en dessous duquel un tiers n'est pas repris (defaut 10)"},
-                "format": {"type": ["string", "null"], "description": "Facultatif : « excel » seulement si l'utilisateur veut un fichier Excel au lieu du mail"},
                 "afficher_mail": {"type": ["string", "boolean", "null"], "description": "Facultatif, laisser vide : mettre « oui » seulement si l'utilisateur demande a lire le mail dans la conversation (sinon le mail est dans le fichier HTML)"},
             },
         },
@@ -160,7 +159,7 @@ def appeler_outil(nom, a):
             controle_fec.resoudre_chemin(a["chemin"]), vide(a.get("date_arrete")), vide(a.get("mois")) or 3,
             vide(a.get("nom_client")), vide(a.get("destinataire")), vide(a.get("signataire")), vide(a.get("delai")),
             vide(a.get("montant_min")) or 10, str(a.get("afficher_mail") or "").strip().lower() in ("oui", "true", "1", "vrai", "yes"),
-            vide(a.get("format")) or "mail")
+            None)
         return texte
     if nom == "tableau_de_bord":
         if not str(a.get("chemin") or "").strip():

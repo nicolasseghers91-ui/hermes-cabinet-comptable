@@ -11,7 +11,7 @@ Outils **100 % locaux** pour un cabinet d'expertise comptable, branchés sur un 
 | `analyse_comptable_mcp.py` | Serveur MCP « analyse comptable » : `controler_fec`, `tableau_de_bord`, `points_en_suspens`, `lister_fichiers_comptables` |
 | `controle_fec.py` | Lecture et contrôles d'un FEC : équilibre à une date d'arrêt, écritures déséquilibrées, doublons, dates hors exercice, soldes de sens inhabituel, comptes d'attente, lettrage, écritures non validées, contrôles propres au type de dossier |
 | `tableau_bord.py`, `tdb_types.py` | Tableaux de bord HTML (N et N-1) : `bic`, `bnc`, `sci_ir`, `sci_is`, `association`, `esms` |
-| `points_suspens.py` | Mail de demande d'information au client, en HTML ou en classeur Excel (voir plus bas) |
+| `points_suspens.py` | Mail de demande d'information au client (HTML) et classeur Excel des mêmes listes (voir plus bas) |
 | `doctrine_mcp.py` | Serveur MCP « doctrine fiscale » : `rechercher_doctrine`, `lire_document` (BOFiP), `rechercher_boss`, `rechercher_loi`, `lire_article` (codes), `rechercher_norme`, `lire_norme` (PCG, recueil ANC) |
 | `legislation.py`, `boss.py`, `normes.py` | Index et recherche : codes consolidés (CGI, LPF, CIBS, Code de commerce, Code civil, CMF, Code du travail, CSS), BOSS, normes ANC |
 | `build_normes.py` | Construit `normes.sqlite` à partir des PDF de l'ANC |
@@ -54,12 +54,12 @@ Dans Hermes, déposer le FEC dans le dossier de travail, puis par exemple :
 
 - « Contrôle le FEC_2026.txt » (ajouter la nature du dossier pour les contrôles spécifiques).
 - « Fais le tableau de bord du FEC_2026.txt, c'est une SARL » → page HTML.
-- « Prépare le mail de points en suspens du FEC_2026.txt » → fichier HTML à copier dans Outlook ; le modèle n'en donne qu'un résumé. Ajouter « en Excel » pour obtenir à la place un classeur (une feuille par rubrique).
+- « Prépare le mail de points en suspens du FEC_2026.txt » → fichier HTML à copier dans Outlook ; le modèle n'en donne qu'un résumé. Le classeur Excel des mêmes listes (une feuille par rubrique) est écrit à côté.
 - « Une société à l'IS peut-elle bénéficier de l'exonération du 151 septies du CGI ? » → lecture de l'article puis du BOFiP.
 
 ### Points en suspens : règles de calcul
 
-- Factures clients (411, 413, 416) et fournisseurs (401, 404) non réglées depuis plus de 3 mois, une ligne par facture ; seuil modifiable (`mois`).
+- Factures clients (411, 413, 416) et fournisseurs (401, 404) non réglées depuis plus de 3 mois, une ligne par facture ; seuil modifiable (`mois`). Les tiers sont classés par ordre alphabétique.
 - Règlements et avoirs non lettrés imputés sur les factures les plus anciennes ; les règlements restant sans facture sont listés dans deux rubriques distinctes. Clients : seulement ceux de plus de 3 mois. Fournisseurs : tous, quelle que soit leur date (une facture d'achat manquante se réclame sans délai).
 - Opérations à justifier : écritures non lettrées des comptes d'attente 471 à 473 (hypothèse de travail à confirmer pour chaque cabinet).
 - Restes inférieurs à 10 € ignorés (`montant_min`). Report à nouveau : ancienneté inconnue, indiquée « avant le début d'exercice ».
