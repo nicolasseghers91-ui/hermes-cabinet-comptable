@@ -45,10 +45,11 @@ def date_age(l, debut, arrete):
     return d, False
 
 
-def tiers_en_retard(lignes, prefixes, sens, arrete, limite, debut, mini=ZERO):
+def tiers_en_retard(lignes, prefixes, sens, arrete, limite, debut, mini=ZERO, sf_toute_date=False):
     """Factures de tiers restant a regler et plus anciennes que `limite`. Les reglements / avoirs non affectes sont
     imputes sur les factures les plus anciennes (les reglements les plus anciens d'abord). Renvoie (liste de tiers,
-    reglements non affectes (nom, total), factures reportees recentes, reglements sans facture plus anciens que `limite`)."""
+    reglements non affectes (nom, total), factures reportees recentes, reglements sans facture plus anciens que `limite`
+    ou, avec `sf_toute_date`, de toutes dates)."""
     opp = "c" if sens == "d" else "d"
     par = {}
     for l in lignes:
@@ -77,7 +78,7 @@ def tiers_en_retard(lignes, prefixes, sens, arrete, limite, debut, mini=ZERO):
                 vivantes.append((d, rep, m, piece))
         if pile:
             non_affectes.append((t["nom"], sum((x[2] for x in pile), ZERO)))
-            vieux = [x for x in pile if x[0] < limite and x[2] >= mini]
+            vieux = [x for x in pile if (sf_toute_date or x[0] < limite) and x[2] >= mini]
             if vieux:
                 sans_facture.append({"nom": t["nom"], "nb": len(vieux), "montant": sum((x[2] for x in vieux), ZERO),
                                      "lignes": [(("avant le " + cf.jj(debut)) if x[1] else cf.jj(x[0]), x[3] or "(sans libellé)", x[2])
@@ -142,8 +143,8 @@ def rubriques(ops, clients, fournisseurs, mois, sf_clients=(), sf_fournisseurs=(
              f"Nous n'avons pas retrouvé de facture de vente correspondant aux règlements (ou avoirs) suivants, enregistrés il y a plus de {mois} mois :",
              "Pourriez-vous nous indiquer à quelle facture ils se rapportent ou, si cette facture n'est pas dans nos écritures, nous en transmettre une copie ? S'il s'agit d'un acompte ou d'un avoir, merci de nous le préciser.",
              "Client"),
-            (f"Règlements de fournisseurs sans facture correspondante, de plus de {mois} mois", sf_fournisseurs,
-             f"Nous n'avons pas retrouvé de facture d'achat correspondant aux règlements (ou avoirs) suivants, enregistrés il y a plus de {mois} mois :",
+            ("Règlements de fournisseurs sans facture correspondante", sf_fournisseurs,
+             "Nous n'avons pas retrouvé de facture d'achat correspondant aux règlements (ou avoirs) suivants, quelle que soit leur date :",
              "Pourriez-vous nous transmettre les factures correspondantes ou, s'il s'agit d'un acompte, d'un remboursement ou d'un avoir, nous le préciser ?",
              "Fournisseur")):
         if items:
@@ -215,7 +216,7 @@ def generer(chemin, date_arrete=None, mois=3, nom_client=None, destinataire=None
     except Exception:  # noqa: BLE001
         mini = Decimal("10")
     clients, na_c, ind_c, sf_c = tiers_en_retard(lignes, CLIENTS, "d", arrete, limite, debut, mini)
-    fourn, na_f, ind_f, sf_f = tiers_en_retard(lignes, FOURNISSEURS, "c", arrete, limite, debut, mini)
+    fourn, na_f, ind_f, sf_f = tiers_en_retard(lignes, FOURNISSEURS, "c", arrete, limite, debut, mini, True)
     petits = [x for x in clients + fourn if x["montant"] < mini]
     clients = [x for x in clients if x["montant"] >= mini]
     fourn = [x for x in fourn if x["montant"] >= mini]
@@ -254,9 +255,10 @@ def generer(chemin, date_arrete=None, mois=3, nom_client=None, destinataire=None
         notes.append("À vérifier en interne avant envoi : les règlements sans facture repris dans le mail ne sont peut-être que des lettrages manquants.")
     reste_c = sum((x[1] for x in na_c), ZERO) - sum((x["montant"] for x in sf_c), ZERO)
     reste_f = sum((x[1] for x in na_f), ZERO) - sum((x["montant"] for x in sf_f), ZERO)
-    if reste_c > 0 or reste_f > 0:
-        notes.append(f"Règlements/avoirs sans facture non repris dans le mail (moins de {mois} mois ou inférieurs à {cf.eur(mini)}) : "
-                     f"clients {cf.eur(max(reste_c, ZERO))}, fournisseurs {cf.eur(max(reste_f, ZERO))}.")
+    if reste_c > 0:
+        notes.append(f"Règlements/avoirs de clients sans facture non repris dans le mail (moins de {mois} mois ou inférieurs à {cf.eur(mini)}) : {cf.eur(reste_c)}.")
+    if reste_f > 0:
+        notes.append(f"Règlements/avoirs de fournisseurs sans facture non repris dans le mail (inférieurs à {cf.eur(mini)}) : {cf.eur(reste_f)}.")
     if ind_c or ind_f:
         notes.append(f"Report à nouveau récent non évalué (ancienneté inconnue) : clients {cf.eur(ind_c)}, fournisseurs {cf.eur(ind_f)}.")
     if illisibles:
@@ -268,13 +270,13 @@ def generer(chemin, date_arrete=None, mois=3, nom_client=None, destinataire=None
     resume = [f"Mail de points en suspens prêt (arrêté au {cf.jj(arrete)}) :"]
     if ops:
         resume.append(f"- Justificatifs manquants : {_pl(len(ops), 'opération')} à justifier, {cf.eur(sum((o['montant'] for o in ops), ZERO))}.")
-    for nom_r, items, tiers, mot in (("Factures clients sans règlement", clients, "client", "facture"),
-                                     ("Factures fournisseurs non réglées", fourn, "fournisseur", "facture"),
-                                     ("Règlements de clients sans facture", sf_c, "client", "règlement"),
-                                     ("Règlements de fournisseurs sans facture", sf_f, "fournisseur", "règlement")):
+    for nom_r, items, tiers, mot, delai_r in (("Factures clients sans règlement", clients, "client", "facture", f" depuis plus de {mois} mois"),
+                                              ("Factures fournisseurs non réglées", fourn, "fournisseur", "facture", f" depuis plus de {mois} mois"),
+                                              ("Règlements de clients sans facture", sf_c, "client", "règlement", f" depuis plus de {mois} mois"),
+                                              ("Règlements de fournisseurs sans facture", sf_f, "fournisseur", "règlement", " (toutes dates)")):
         if items:
             n = sum(len(x["lignes"]) for x in items)
-            resume.append(f"- {nom_r} depuis plus de {mois} mois : {_pl(n, mot)} ({_pl(len(items), tiers)}), "
+            resume.append(f"- {nom_r}{delai_r} : {_pl(n, mot)} ({_pl(len(items), tiers)}), "
                           f"{cf.eur(sum((x['montant'] for x in items), ZERO))}.")
     consigne = ("Réponds en 3 ou 4 lignes : reprends ce résumé, indique le fichier à ouvrir et, s'il y en a, la mention « à vérifier en interne » si elle figure dans les notes. "
                 "NE recopie PAS le mail et n'écris aucun tableau : il est dans le fichier. Ne l'envoie pas. "
