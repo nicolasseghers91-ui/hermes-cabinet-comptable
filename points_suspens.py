@@ -35,13 +35,14 @@ def moins_mois(d, n):
     return datetime.date(a, m, min(d.day, calendar.monthrange(a, m)[1]))
 
 
-def est_ouverte(l, arrete):
-    """Ligne non lettree a la date d'arret (ou lettree seulement apres cette date)."""
+def est_ouverte(l, arrete, explicite=False):
+    """Ligne non lettree. Une ligne lettree est rapprochee quelle que soit la date de lettrage ; seule une date d'arret
+    donnee par l'utilisateur (explicite) fait compter comme ouverte une ligne lettree apres cette date."""
     if l["date"] and l["date"] > arrete:
         return False
     if not l["let"]:
         return True
-    return bool(l.get("dlet") and l["dlet"] > arrete)
+    return bool(explicite and l.get("dlet") and l["dlet"] > arrete)
 
 
 def date_age(l, debut, arrete):
@@ -54,59 +55,72 @@ def date_age(l, debut, arrete):
     return d, False
 
 
-def tiers_en_retard(lignes, prefixes, sens, arrete, limite, debut, mini=ZERO, sf_toute_date=False):
-    """Factures de tiers restant a regler et plus anciennes que `limite`. Les reglements / avoirs non affectes sont
-    imputes sur les factures les plus anciennes (les reglements les plus anciens d'abord). Renvoie (liste de tiers,
-    reglements non affectes (nom, total), factures reportees recentes, reglements sans facture plus anciens que `limite`
-    ou, avec `sf_toute_date`, de toutes dates)."""
-    opp = "c" if sens == "d" else "d"
-    par = {}
+def ecritures_banque(lignes):
+    """Ecritures passees en banque ou en caisse : celles qui comportent une ligne sur un compte 51 ou 53 (hors a-nouveaux).
+    Renvoie (ensemble des cles d'ecriture, codes des journaux concernes)."""
+    cles, journaux = set(), set()
     for l in lignes:
-        if not l["cpt"].startswith(prefixes) or not est_ouverte(l, arrete):
+        if l["cpt"].startswith(("51", "53")) and l["j"].strip().upper() not in cf.AN_JOURNAUX:
+            cles.add(cf.cle_ecriture(l))
+            journaux.add(l["j"])
+    return cles, journaux
+
+
+def _par_tiers(dic, debut, sans):
+    out = []
+    for t in dic.values():
+        t["l"].sort(key=lambda x: (x[0], str(x[3] or "")))
+        out.append({"nom": t["nom"], "nb": len(t["l"]), "montant": sum((x[2] for x in t["l"]), ZERO),
+                    "lignes": [(("avant le " + cf.jj(debut)) if x[1] else cf.jj(x[0]), x[3] or sans, x[2]) for x in t["l"]]})
+    out.sort(key=lambda x: cle_alpha(x["nom"]))
+    return out
+
+
+def points_tiers(lignes, prefixes, sens, arrete, limite, debut, mini, banque, reglements_toute_date=False, explicite=False):
+    """Ecritures NON LETTREES des comptes de tiers (le lettrage du FEC fait foi, aucune imputation par solde).
+    Renvoie (factures, reglements, autres, indetermine, partiels) :
+      factures   : lignes du sens normal du tiers (debit client, credit fournisseur) plus anciennes que `limite` ;
+      reglements : lignes de sens inverse d'une ecriture de banque ou de caisse (toutes dates si
+                   `reglements_toute_date`, sinon plus anciennes que `limite`) ;
+      autres     : total des autres lignes de sens inverse non lettrees (avoirs, OD, a-nouveaux) ;
+      indetermine: report a nouveau recent, ancienneté inconnue ;
+      partiels   : (nombre, montant) de groupes lettres dont le solde n'est pas nul (lettrage partiel)."""
+    opp = "c" if sens == "d" else "d"
+    fact, regl, groupes = {}, {}, {}
+    autres = indetermine = ZERO
+    for l in lignes:
+        if not l["cpt"].startswith(prefixes) or (l["date"] and l["date"] > arrete):
             continue
-        cle = l["aux"] or l["cpt"]
-        t = par.setdefault(cle, {"nom": l.get("auxlib") or l["cptlib"] or cle, "fact": [], "cred": []})
         m = l[sens] - l[opp]
-        d, rep = date_age(l, debut, arrete)
+        cle = l["aux"] or l["cpt"]
+        if l["let"] and not est_ouverte(l, arrete, explicite):
+            groupes[(cle, l["let"])] = groupes.get((cle, l["let"]), ZERO) + m
+            continue
+        if m == 0:
+            continue
+        nom = l.get("auxlib") or l["cptlib"] or cle
         if m > 0:
-            t["fact"].append((d, rep, m, l["piece"] or l["lib"]))
-        elif m < 0:
-            t["cred"].append([d, rep, -m, l["lib"] or l["piece"]])
-    res, non_affectes, indetermine, sans_facture = [], [], ZERO, []
-    for t in par.values():
-        pile = sorted(t["cred"], key=lambda x: x[0])
-        vivantes = []
-        for d, rep, m, piece in sorted(t["fact"], key=lambda x: x[0]):
-            while m > 0 and pile:
-                imp = min(m, pile[0][2])
-                pile[0][2] -= imp
-                m -= imp
-                if pile[0][2] == 0:
-                    pile.pop(0)
-            if m > 0:
-                vivantes.append((d, rep, m, piece))
-        if pile:
-            non_affectes.append((t["nom"], sum((x[2] for x in pile), ZERO)))
-            vieux = [x for x in pile if (sf_toute_date or x[0] < limite) and x[2] >= mini]
-            if vieux:
-                sans_facture.append({"nom": t["nom"], "nb": len(vieux), "montant": sum((x[2] for x in vieux), ZERO),
-                                     "lignes": [(("avant le " + cf.jj(debut)) if x[1] else cf.jj(x[0]), x[3] or "(sans libellé)", x[2])
-                                                for x in vieux]})
-        anciennes = [x for x in vivantes if x[0] < limite and x[2] >= mini]
-        indetermine += sum((x[2] for x in vivantes if x[1] and x[0] >= limite), ZERO)
-        if anciennes:
-            res.append({"nom": t["nom"], "nb": len(anciennes), "montant": sum((x[2] for x in anciennes), ZERO),
-                        "lignes": [(("avant le " + cf.jj(debut)) if x[1] else cf.jj(x[0]), x[3] or "(sans référence)", x[2])
-                                   for x in anciennes]})
-    res.sort(key=lambda x: cle_alpha(x["nom"]))
-    sans_facture.sort(key=lambda x: cle_alpha(x["nom"]))
-    return res, non_affectes, indetermine, sans_facture
+            d, rep = date_age(l, debut, arrete)
+            if d < limite:
+                if m >= mini:
+                    fact.setdefault(cle, {"nom": nom, "l": []})["l"].append((d, rep, m, l["piece"] or l["lib"]))
+            elif rep:
+                indetermine += m
+        elif cf.cle_ecriture(l) in banque:
+            d = l["date"] or arrete
+            if (reglements_toute_date or d < limite) and -m >= mini:
+                regl.setdefault(cle, {"nom": nom, "l": []})["l"].append((d, False, -m, l["lib"] or l["piece"]))
+        else:
+            autres += -m
+    ecarts = [abs(v) for v in groupes.values() if v != 0]
+    return (_par_tiers(fact, debut, "(sans référence)"), _par_tiers(regl, debut, "(sans libellé)"), autres, indetermine,
+            (len(ecarts), sum(ecarts, ZERO)))
 
 
-def operations_a_justifier(lignes, arrete):
+def operations_a_justifier(lignes, arrete, explicite=False):
     res = []
     for l in lignes:
-        if l["cpt"].startswith(ATTENTE) and est_ouverte(l, arrete):
+        if l["cpt"].startswith(ATTENTE) and est_ouverte(l, arrete, explicite):
             m = l["d"] - l["c"]
             if m != 0:
                 res.append({"date": l["date"], "lib": l["lib"] or l["piece"], "sens": "Paiement" if m > 0 else "Encaissement",
@@ -137,25 +151,25 @@ def rubriques(ops, clients, fournisseurs, mois, sf_clients=(), sf_fournisseurs=(
                   "fin": "Pourriez-vous nous transmettre les pièces correspondantes (facture, note de frais, contrat…) ou, à défaut, nous préciser la nature de ces opérations ?"})
     for titre, items, intro, fin, nom, feuille in (
             (f"Factures clients sans règlement depuis plus de {mois} mois", clients,
-             f"Nous n'avons trouvé aucun règlement pour les factures clients suivantes, émises il y a plus de {mois} mois :",
+             f"Nous n'avons pas pu rapprocher de règlement des factures clients suivantes, émises il y a plus de {mois} mois :",
              "Pour chacune, pourriez-vous nous dire si elle est toujours due (et si une relance est en cours), si elle a déjà été réglée (date et mode de règlement), si elle est contestée, ou si vous la considérez comme irrécouvrable ?",
              "Client", "Factures clients"),
             (f"Factures fournisseurs non réglées depuis plus de {mois} mois", fournisseurs,
-             f"Nous n'avons trouvé aucun règlement pour les factures fournisseurs suivantes, datées de plus de {mois} mois :",
+             f"Nous n'avons pas pu rapprocher de règlement des factures fournisseurs suivantes, datées de plus de {mois} mois :",
              "Pourriez-vous nous confirmer qu'elles restent à régler, ou nous indiquer la date et le mode de règlement si elles ont déjà été payées ? Si l'une d'elles est contestée ou doit donner lieu à un avoir, merci de nous le préciser.",
              "Fournisseur", "Factures fournisseurs")):
         if items:
             lignes = [[_cell(x["nom"]), _cell(ref, 40), d, cf.eur(m)] for x in items for d, ref, m in x["lignes"]]
             r.append({"titre": f"{titre} ({_pl(len(lignes), 'facture')}, {cf.eur(sum((x['montant'] for x in items), ZERO))})",
-                      "intro": intro, "cols": [nom, "N° de facture", "Date", "Reste dû"], "lignes": lignes, "fin": fin,
+                      "intro": intro, "cols": [nom, "N° de facture", "Date", "Montant"], "lignes": lignes, "fin": fin,
                       "nums": [m for x in items for _, _, m in x["lignes"]], "feuille": feuille})
     for titre, items, intro, fin, nom, feuille in (
             (f"Règlements de clients sans facture correspondante, de plus de {mois} mois", sf_clients,
-             f"Nous n'avons pas retrouvé de facture de vente correspondant aux règlements (ou avoirs) suivants, enregistrés il y a plus de {mois} mois :",
-             "Pourriez-vous nous indiquer à quelle facture ils se rapportent ou, si cette facture n'est pas dans nos écritures, nous en transmettre une copie ? S'il s'agit d'un acompte ou d'un avoir, merci de nous le préciser.",
+             f"Nous n'avons pas pu rattacher à une facture de vente les encaissements suivants, enregistrés il y a plus de {mois} mois :",
+             "Pourriez-vous nous indiquer à quelle facture ils se rapportent ou, si cette facture n'est pas dans nos écritures, nous en transmettre une copie ? S'il s'agit d'un acompte, d'un remboursement ou d'un avoir, merci de nous le préciser.",
              "Client", "Règlements clients"),
             ("Règlements de fournisseurs sans facture correspondante", sf_fournisseurs,
-             "Nous n'avons pas retrouvé de facture d'achat correspondant aux règlements (ou avoirs) suivants, quelle que soit leur date :",
+             "Nous n'avons pas pu rattacher à une facture d'achat les règlements suivants, quelle que soit leur date :",
              "Pourriez-vous nous transmettre les factures correspondantes ou, s'il s'agit d'un acompte, d'un remboursement ou d'un avoir, nous le préciser ?",
              "Fournisseur", "Règlements fournisseurs")):
         if items:
@@ -311,16 +325,15 @@ def generer(chemin, date_arrete=None, mois=3, nom_client=None, destinataire=None
             raise ValueError(f"date d'arret illisible : {date_arrete} (format JJ/MM/AAAA)")
     mois = int(mois) if str(mois or "").strip().isdigit() and int(mois) > 0 else 3
     limite = moins_mois(arrete, mois)
-    ops = operations_a_justifier(lignes, arrete)
+    explicite = bool(date_arrete)
+    ops = operations_a_justifier(lignes, arrete, explicite)
     try:
         mini = Decimal(str(montant_min).replace(",", ".")) if str(montant_min or "").strip() else Decimal("10")
     except Exception:  # noqa: BLE001
         mini = Decimal("10")
-    clients, na_c, ind_c, sf_c = tiers_en_retard(lignes, CLIENTS, "d", arrete, limite, debut, mini)
-    fourn, na_f, ind_f, sf_f = tiers_en_retard(lignes, FOURNISSEURS, "c", arrete, limite, debut, mini, True)
-    petits = [x for x in clients + fourn if x["montant"] < mini]
-    clients = [x for x in clients if x["montant"] >= mini]
-    fourn = [x for x in fourn if x["montant"] >= mini]
+    banque, journaux_b = ecritures_banque(lignes)
+    clients, sf_c, au_c, ind_c, pa_c = points_tiers(lignes, CLIENTS, "d", arrete, limite, debut, mini, banque, False, explicite)
+    fourn, sf_f, au_f, ind_f, pa_f = points_tiers(lignes, FOURNISSEURS, "c", arrete, limite, debut, mini, banque, True, explicite)
     rub = rubriques(ops, clients, fourn, mois, sf_c, sf_f)
     if not rub:
         return (f"Aucun point en suspens au {cf.jj(arrete)} : pas d'opération en compte d'attente (471-473), aucune facture "
@@ -348,20 +361,20 @@ def generer(chemin, date_arrete=None, mois=3, nom_client=None, destinataire=None
             sortie = sortie_x = None
     if not sortie:
         raise ValueError("impossible d'ecrire le fichier du mail (dossier de travail Hermes et dossier « sorties » inaccessibles).")
-    notes = [f"Base : FEC du {cf.jj(debut)} au {cf.jj(fin)}, points arrêtés au {cf.jj(arrete)} ; ancienneté = date de la pièce, "
-             f"seuil {mois} mois (avant le {cf.jj(limite)}) ; les règlements non lettrés sont imputés sur les factures les plus anciennes ; "
-             f"restes de facture inférieurs à {cf.eur(mini)} ignorés ; "
-             "opérations à justifier = comptes 471 à 473 non lettrés."]
-    if petits:
-        notes.append(f"{len(petits)} tiers de moins de {cf.eur(mini)} non repris dans le mail ({cf.eur(sum((x['montant'] for x in petits), ZERO))} au total) ; les restes de facture inférieurs à ce montant sont ignorés.")
-    if sf_c or sf_f:
-        notes.append("À vérifier en interne avant envoi : les règlements sans facture repris ci-dessus ne sont peut-être que des lettrages manquants.")
-    reste_c = sum((x[1] for x in na_c), ZERO) - sum((x["montant"] for x in sf_c), ZERO)
-    reste_f = sum((x[1] for x in na_f), ZERO) - sum((x["montant"] for x in sf_f), ZERO)
-    if reste_c > 0:
-        notes.append(f"Règlements/avoirs de clients sans facture non repris (moins de {mois} mois ou inférieurs à {cf.eur(mini)}) : {cf.eur(reste_c)}.")
-    if reste_f > 0:
-        notes.append(f"Règlements/avoirs de fournisseurs sans facture non repris (inférieurs à {cf.eur(mini)}) : {cf.eur(reste_f)}.")
+    notes = [f"Base : FEC du {cf.jj(debut)} au {cf.jj(fin)}, état au {cf.jj(arrete)} ; sont repris les écritures NON LETTRÉES du FEC "
+             + ("(lettrées après la date d'arrêté comprises) " if explicite else "(quelle que soit la date de lettrage) ")
+             + f"; factures : ancienneté = date de la pièce, seuil {mois} mois (avant le {cf.jj(limite)}) ; "
+             f"règlements = lignes des écritures de banque ou de caisse (comptes 51 et 53 ; journaux : {', '.join(sorted(journaux_b)) or 'aucun'}) ; "
+             f"lignes inférieures à {cf.eur(mini)} ignorées ; opérations à justifier = comptes 471 à 473 non lettrés."]
+    doubles_c = {x["nom"] for x in clients} & {x["nom"] for x in sf_c}
+    doubles_f = {x["nom"] for x in fourn} & {x["nom"] for x in sf_f}
+    if doubles_c or doubles_f:
+        notes.append(f"À lettrer en interne avant envoi : {_pl(len(doubles_c), 'client')} et {_pl(len(doubles_f), 'fournisseur')} ont à la fois des factures et des règlements non lettrés repris ci-dessus.")
+    if au_c or au_f:
+        notes.append(f"Avoirs, OD et à-nouveaux de sens inverse non lettrés, hors écritures de banque, non repris : clients {cf.eur(au_c)}, fournisseurs {cf.eur(au_f)}.")
+    if pa_c[0] or pa_f[0]:
+        notes.append(f"Lettrages partiels non repris (groupes lettrés dont le solde n'est pas nul) : clients {pa_c[0]} groupe(s) / {cf.eur(pa_c[1])}, "
+                     f"fournisseurs {pa_f[0]} groupe(s) / {cf.eur(pa_f[1])}.")
     if ind_c or ind_f:
         notes.append(f"Report à nouveau récent non évalué (ancienneté inconnue) : clients {cf.eur(ind_c)}, fournisseurs {cf.eur(ind_f)}.")
     if illisibles:

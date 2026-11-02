@@ -59,10 +59,12 @@ Dans Hermes, déposer le FEC dans le dossier de travail, puis par exemple :
 
 ### Points en suspens : règles de calcul
 
-- Factures clients (411, 413, 416) et fournisseurs (401, 404) non réglées depuis plus de 3 mois, une ligne par facture ; seuil modifiable (`mois`). Les tiers sont classés par ordre alphabétique.
-- Règlements et avoirs non lettrés imputés sur les factures les plus anciennes ; les règlements restant sans facture sont listés dans deux rubriques distinctes. Clients : seulement ceux de plus de 3 mois. Fournisseurs : tous, quelle que soit leur date (une facture d'achat manquante se réclame sans délai).
+- Seules les écritures **non lettrées** du FEC sont reprises (une écriture lettrée, même après la fin de l'exercice, est considérée comme lettrée ; avec `date_arrete`, un lettrage postérieur à cette date compte comme non lettré). Aucune imputation entre règlements et factures.
+- Factures clients (411, 413, 416) et fournisseurs (401, 404) non lettrées et de plus de 3 mois, une ligne par écriture ; seuil modifiable (`mois`). Tiers classés par ordre alphabétique.
+- Règlements sans facture : lignes non lettrées de sens inverse appartenant à une écriture de banque ou de caisse (comptes 51 et 53). Clients : seulement ceux de plus de 3 mois ; fournisseurs : tous, quelle que soit leur date.
+- Avoirs, OD et à-nouveaux de sens inverse hors banque, et lettrages partiels : non repris, totalisés dans les notes internes (non envoyées au client).
 - Opérations à justifier : écritures non lettrées des comptes d'attente 471 à 473 (hypothèse de travail à confirmer pour chaque cabinet).
-- Restes inférieurs à 10 € ignorés (`montant_min`). Report à nouveau : ancienneté inconnue, indiquée « avant le début d'exercice ».
+- Lignes inférieures à 10 € ignorées (`montant_min`). Report à nouveau : ancienneté inconnue, indiquée « avant le début d'exercice ».
 - Le mail porte les noms comptables du FEC : à relire avant envoi, le lettrage manquant pouvant expliquer certains points.
 
 ## Contribuer en sécurité

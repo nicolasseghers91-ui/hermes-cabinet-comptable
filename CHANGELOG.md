@@ -1,6 +1,7 @@
 # Journal des modifications
 
 ## 2026-11-02
+- Points en suspens : contrôle refondu sur le lettrage. Seules les lignes non lettrées sont reprises, sans imputation sur les soldes ; les règlements sans facture sont les lignes non lettrées des écritures de banque ou de caisse (51, 53) ; un lettrage postérieur à la fin du FEC compte comme lettré (sauf `date_arrete` explicite). Avoirs, OD, à-nouveaux et lettrages partiels sont signalés dans les notes internes.
 - Points en suspens : les règlements de fournisseurs sans facture sont tous repris, quelle que soit leur date (les règlements de clients restent limités aux plus de 3 mois).
 - Points en suspens : en plus du mail HTML, un classeur Excel des mêmes listes est toujours écrit (une feuille par rubrique, montants numériques). Un petit modèle local créait sinon son propre fichier à partir du HTML.
 - Points en suspens : tiers classés par ordre alphabétique (sans tenir compte des accents ni de la casse).
