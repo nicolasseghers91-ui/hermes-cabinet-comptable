@@ -88,12 +88,31 @@ def ecritures_banque(lignes):
     return cles, journaux
 
 
-def _par_tiers(dic, debut, sans):
+def _regrouper(lignes, sans):
+    """Regroupe les reglements repetes a l'identique (meme montant, meme libelle, au moins 3 fois) en une ligne :
+    abonnements, loyers, contrats. Renvoie des lignes (date, libelle, montant) ; le montant est le total du groupe."""
+    groupes = {}
+    for x in lignes:
+        groupes.setdefault((x[2], str(x[3] or sans)), []).append(x)
+    out = []
+    for (m, lib), g in groupes.items():
+        if len(g) >= 3:
+            out.append((g[0][0], f"du {cf.jj(g[0][0])} au {cf.jj(g[-1][0])}", f"{len(g)} règlements de {cf.eur(m)} – {lib}", m * len(g)))
+        else:
+            out.extend((x[0], cf.jj(x[0]), lib, x[2]) for x in g)
+    out.sort(key=lambda x: (x[0], x[2]))
+    return [(x[1], x[2], x[3]) for x in out]
+
+
+def _par_tiers(dic, debut, sans, regrouper=False):
     out = []
     for t in dic.values():
         t["l"].sort(key=lambda x: (x[0], str(x[3] or "")))
-        out.append({"nom": t["nom"], "nb": len(t["l"]), "montant": sum((x[2] for x in t["l"]), ZERO),
-                    "lignes": [(("avant le " + cf.jj(debut)) if x[1] else cf.jj(x[0]), x[3] or sans, x[2]) for x in t["l"]]})
+        if regrouper:
+            lignes = _regrouper(t["l"], sans)
+        else:
+            lignes = [(("avant le " + cf.jj(debut)) if x[1] else cf.jj(x[0]), x[3] or sans, x[2]) for x in t["l"]]
+        out.append({"nom": t["nom"], "nb": len(t["l"]), "montant": sum((x[2] for x in t["l"]), ZERO), "lignes": lignes})
     out.sort(key=lambda x: cle_alpha(x["nom"]))
     return out
 
@@ -152,7 +171,7 @@ def points_tiers(lignes, prefixes, sens, arrete, limite, debut, mini, banque, re
         info["ignore"] = "aucun compte client détaillé par tiers" if not tiers else "un seul compte client"
         fact, regl = {}, {}
     ecarts = [abs(v) for v in groupes.values() if v != 0]
-    return (_par_tiers(fact, debut, "(sans référence)"), _par_tiers(regl, debut, "(sans libellé)"), autres,
+    return (_par_tiers(fact, debut, "(sans référence)"), _par_tiers(regl, debut, "(sans libellé)", True), autres,
             (len(ecarts), sum(ecarts, ZERO)), info)
 
 
@@ -212,10 +231,10 @@ def rubriques(ops, clients, fournisseurs, mois, sf_clients=(), sf_fournisseurs=(
              "Pourriez-vous nous transmettre les factures correspondantes ou, s'il s'agit d'un acompte, d'un remboursement ou d'un avoir, nous le préciser ?",
              "Fournisseur", "Règlements fournisseurs")):
         if items:
-            lignes = [[_cell(x["nom"]), d, _cell(lib, 40), cf.eur(m)] for x in items for d, lib, m in x["lignes"]]
-            r.append({"titre": f"{titre} ({_pl(len(lignes), 'règlement')}, {cf.eur(sum((x['montant'] for x in items), ZERO))})",
+            lignes = [[_cell(x["nom"]), d, _cell(lib, 70), cf.eur(m)] for x in items for d, lib, m in x["lignes"]]
+            r.append({"titre": f"{titre} ({_pl(sum(x['nb'] for x in items), 'règlement')}, {cf.eur(sum((x['montant'] for x in items), ZERO))})",
                       "intro": intro, "cols": [nom, "Date", "Libellé", "Montant"], "lignes": lignes, "fin": fin,
-                      "nums": [m for x in items for _, _, m in x["lignes"]], "feuille": feuille})
+                      "nums": [m for x in items for _, _, m in x["lignes"]], "feuille": feuille, "nb": sum(x["nb"] for x in items)})
     return r
 
 
@@ -306,9 +325,9 @@ def _feuille_xml(rows, largeurs):
 def ecrire_xlsx(chemin, rub, objet):
     """Classeur Excel (sans bibliotheque externe) : une feuille de synthese puis une feuille par rubrique."""
     feuilles = []
-    synth = [[(objet, 3)], [], [("Rubrique", 1), ("Nombre de lignes", 1), ("Montant", 1)]]
+    synth = [[(objet, 3)], [], [("Rubrique", 1), ("Nombre", 1), ("Montant", 1)]]
     for s in rub:
-        synth.append([s["feuille"], len(s["lignes"]), sum(s["nums"], ZERO)])
+        synth.append([s["feuille"], s.get("nb", len(s["lignes"])), sum(s["nums"], ZERO)])
     feuilles.append(("Synthèse", synth, [34, 18, 16]))
     for s in rub:
         rows = [[(c, 1) for c in s["cols"]]]
@@ -443,7 +462,7 @@ def generer(chemin, date_arrete=None, mois=3, nom_client=None, destinataire=None
                                               ("Règlements de clients sans facture", sf_c, "client", "règlement", f" depuis plus de {mois} mois"),
                                               ("Règlements de fournisseurs sans facture", sf_f, "fournisseur", "règlement", " (toutes dates)")):
         if items:
-            n = sum(len(x["lignes"]) for x in items)
+            n = sum(x["nb"] for x in items)
             resume.append(f"- {nom_r}{delai_r} : {_pl(n, mot)} ({_pl(len(items), tiers)}), "
                           f"{cf.eur(sum((x['montant'] for x in items), ZERO))}.")
     consigne = ("Réponds en 3 ou 4 lignes : reprends ce résumé, indique les deux fichiers (mail HTML, classeur Excel) et, s'il y en a, la mention « à vérifier en interne » si elle figure dans les notes. "
