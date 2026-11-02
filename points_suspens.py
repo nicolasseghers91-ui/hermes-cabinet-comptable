@@ -45,14 +45,24 @@ def est_ouverte(l, arrete, explicite=False):
     return bool(explicite and l.get("dlet") and l["dlet"] > arrete)
 
 
-def date_age(l, debut, arrete):
-    """(date de reference, reporte) ; reporte = report a nouveau, date d'origine inconnue (anterieure au debut d'exercice)."""
-    if l["j"].strip().upper() in cf.AN_JOURNAUX:
-        return debut - datetime.timedelta(days=1), True
+def date_age(l, arrete):
+    """Date de reference d'une ligne : la plus ancienne de la date d'ecriture et de la date de piece."""
     d, pd = l["date"] or arrete, l.get("pdate")
-    if pd and pd < d:
-        d = pd
-    return d, False
+    return pd if pd and pd < d else d
+
+
+MOYENS = re.compile(r"\b(?:cb|c b|cartes? (?:bleue?s?|bancaires?)|especes?|cheques?|caisse|comptoir|divers|tpe|paypal|stripe|sumup|"
+                    r"monetico|virements?|prelevements?|tickets?)\b")
+
+
+def sans_tiers(l):
+    """Ligne client sans compte auxiliaire propre (compte 411 seul) : on ne sait pas a quel client la rattacher."""
+    return not l["aux"] or l["aux"] == l["cpt"]
+
+
+def moyen_paiement(l):
+    """Tiers client qui est en fait un moyen de paiement ou une caisse (CB, especes, cheques...) : libelle du tiers, a defaut son code."""
+    return bool(MOYENS.search(cle_alpha(l.get("auxlib") or l["aux"])[0]))
 
 
 def ecritures_banque(lignes):
@@ -76,21 +86,34 @@ def _par_tiers(dic, debut, sans):
     return out
 
 
-def points_tiers(lignes, prefixes, sens, arrete, limite, debut, mini, banque, reglements_toute_date=False, explicite=False):
+def points_tiers(lignes, prefixes, sens, arrete, limite, debut, mini, banque, reglements_toute_date=False, explicite=False, clients=False):
     """Ecritures NON LETTREES des comptes de tiers (le lettrage du FEC fait foi, aucune imputation par solde).
-    Renvoie (factures, reglements, autres, indetermine, partiels) :
+    Renvoie (factures, reglements, autres, partiels, info) :
       factures   : lignes du sens normal du tiers (debit client, credit fournisseur) plus anciennes que `limite` ;
       reglements : lignes de sens inverse d'une ecriture de banque ou de caisse (toutes dates si
                    `reglements_toute_date`, sinon plus anciennes que `limite`) ;
-      autres     : total des autres lignes de sens inverse non lettrees (avoirs, OD, a-nouveaux) ;
-      indetermine: report a nouveau recent, ancienneté inconnue ;
-      partiels   : (nombre, montant) de groupes lettres dont le solde n'est pas nul (lettrage partiel)."""
+      autres     : total des autres lignes de sens inverse non lettrees (avoirs, OD) ;
+      partiels   : (nombre, montant) de groupes lettres dont le solde n'est pas nul (lettrage partiel) ;
+      info       : a-nouveaux non lettres ecartes (an), lignes sans compte auxiliaire (sans_aux), tiers ecartes
+                   (exclus), nombre de tiers (nb_tiers) et motif si le cote client est ignore (ignore).
+    Les a-nouveaux sont toujours ecartes (anciennete inconnue). Cote clients (`clients`) : lignes sans compte auxiliaire et
+    tiers « moyen de paiement » (CB, especes, cheques...) ecartes ; un seul client ou aucun = pas de suivi par tiers, tout est ignore."""
     opp = "c" if sens == "d" else "d"
-    fact, regl, groupes = {}, {}, {}
-    autres = indetermine = ZERO
+    fact, regl, groupes, tiers = {}, {}, {}, set()
+    autres = ZERO
+    info = {"an": [0, ZERO], "sans_aux": 0, "exclus": set(), "nb_tiers": 0, "ignore": ""}
     for l in lignes:
         if not l["cpt"].startswith(prefixes) or (l["date"] and l["date"] > arrete):
             continue
+        nom = l.get("auxlib") or l["cptlib"] or l["aux"] or l["cpt"]
+        if clients:
+            if sans_tiers(l):
+                info["sans_aux"] += 1
+                continue
+            if moyen_paiement(l):
+                info["exclus"].add(nom)
+                continue
+            tiers.add(l["aux"])
         m = l[sens] - l[opp]
         cle = l["aux"] or l["cpt"]
         if l["let"] and not est_ouverte(l, arrete, explicite):
@@ -98,23 +121,27 @@ def points_tiers(lignes, prefixes, sens, arrete, limite, debut, mini, banque, re
             continue
         if m == 0:
             continue
-        nom = l.get("auxlib") or l["cptlib"] or cle
+        if l["j"].strip().upper() in cf.AN_JOURNAUX:
+            info["an"][0] += 1
+            info["an"][1] += abs(m)
+            continue
         if m > 0:
-            d, rep = date_age(l, debut, arrete)
-            if d < limite:
-                if m >= mini:
-                    fact.setdefault(cle, {"nom": nom, "l": []})["l"].append((d, rep, m, l["piece"] or l["lib"]))
-            elif rep:
-                indetermine += m
+            d = date_age(l, arrete)
+            if d < limite and m >= mini:
+                fact.setdefault(cle, {"nom": nom, "l": []})["l"].append((d, False, m, l["piece"] or l["lib"]))
         elif cf.cle_ecriture(l) in banque:
             d = l["date"] or arrete
             if (reglements_toute_date or d < limite) and -m >= mini:
                 regl.setdefault(cle, {"nom": nom, "l": []})["l"].append((d, False, -m, l["lib"] or l["piece"]))
         else:
             autres += -m
+    info["nb_tiers"] = len(tiers)
+    if clients and len(tiers) <= 1:
+        info["ignore"] = "aucun compte client détaillé par tiers" if not tiers else "un seul compte client"
+        fact, regl = {}, {}
     ecarts = [abs(v) for v in groupes.values() if v != 0]
-    return (_par_tiers(fact, debut, "(sans référence)"), _par_tiers(regl, debut, "(sans libellé)"), autres, indetermine,
-            (len(ecarts), sum(ecarts, ZERO)))
+    return (_par_tiers(fact, debut, "(sans référence)"), _par_tiers(regl, debut, "(sans libellé)"), autres,
+            (len(ecarts), sum(ecarts, ZERO)), info)
 
 
 def operations_a_justifier(lignes, arrete, explicite=False):
@@ -332,12 +359,13 @@ def generer(chemin, date_arrete=None, mois=3, nom_client=None, destinataire=None
     except Exception:  # noqa: BLE001
         mini = Decimal("10")
     banque, journaux_b = ecritures_banque(lignes)
-    clients, sf_c, au_c, ind_c, pa_c = points_tiers(lignes, CLIENTS, "d", arrete, limite, debut, mini, banque, False, explicite)
-    fourn, sf_f, au_f, ind_f, pa_f = points_tiers(lignes, FOURNISSEURS, "c", arrete, limite, debut, mini, banque, True, explicite)
+    clients, sf_c, au_c, pa_c, inf_c = points_tiers(lignes, CLIENTS, "d", arrete, limite, debut, mini, banque, False, explicite, True)
+    fourn, sf_f, au_f, pa_f, inf_f = points_tiers(lignes, FOURNISSEURS, "c", arrete, limite, debut, mini, banque, True, explicite)
     rub = rubriques(ops, clients, fourn, mois, sf_c, sf_f)
     if not rub:
         return (f"Aucun point en suspens au {cf.jj(arrete)} : pas d'opération en compte d'attente (471-473), aucune facture "
-                f"client ou fournisseur non réglée et aucun règlement sans facture depuis plus de {mois} mois."), None
+                f"client ou fournisseur non réglée et aucun règlement sans facture depuis plus de {mois} mois."
+                + (f" Clients non contrôlés ({inf_c['ignore']})." if inf_c["ignore"] else "")), None
     objet = f"Points en suspens au {cf.jj(arrete)}" + (f" – {nom_client}" if nom_client else "")
     salut = f"Bonjour {destinataire}," if destinataire else "Bonjour,"
     delai = delai or "[date limite]"
@@ -365,18 +393,25 @@ def generer(chemin, date_arrete=None, mois=3, nom_client=None, destinataire=None
              + ("(lettrées après la date d'arrêté comprises) " if explicite else "(quelle que soit la date de lettrage) ")
              + f"; factures : ancienneté = date de la pièce, seuil {mois} mois (avant le {cf.jj(limite)}) ; "
              f"règlements = lignes des écritures de banque ou de caisse (comptes 51 et 53 ; journaux : {', '.join(sorted(journaux_b)) or 'aucun'}) ; "
-             f"lignes inférieures à {cf.eur(mini)} ignorées ; opérations à justifier = comptes 471 à 473 non lettrés."]
+             f"à-nouveaux et lignes inférieures à {cf.eur(mini)} ignorés ; opérations à justifier = comptes 471 à 473 non lettrés."]
+    if inf_c["ignore"]:
+        notes.append(f"Clients non contrôlés : {inf_c['ignore']} (pas de suivi par client dans ce dossier).")
+    if inf_c["exclus"]:
+        notes.append("Comptes clients écartés (moyens de paiement, caisse) : " + ", ".join(sorted(inf_c["exclus"], key=cle_alpha)[:12]) + ".")
+    if inf_c["sans_aux"]:
+        notes.append(f"{_pl(inf_c['sans_aux'], 'ligne')} sur le compte client général (411 sans compte auxiliaire) non reprise(s).")
     doubles_c = {x["nom"] for x in clients} & {x["nom"] for x in sf_c}
     doubles_f = {x["nom"] for x in fourn} & {x["nom"] for x in sf_f}
     if doubles_c or doubles_f:
         notes.append(f"À lettrer en interne avant envoi : {_pl(len(doubles_c), 'client')} et {_pl(len(doubles_f), 'fournisseur')} ont à la fois des factures et des règlements non lettrés repris ci-dessus.")
     if au_c or au_f:
-        notes.append(f"Avoirs, OD et à-nouveaux de sens inverse non lettrés, hors écritures de banque, non repris : clients {cf.eur(au_c)}, fournisseurs {cf.eur(au_f)}.")
+        notes.append(f"Avoirs et OD de sens inverse non lettrés, hors écritures de banque, non repris : clients {cf.eur(au_c)}, fournisseurs {cf.eur(au_f)}.")
     if pa_c[0] or pa_f[0]:
         notes.append(f"Lettrages partiels non repris (groupes lettrés dont le solde n'est pas nul) : clients {pa_c[0]} groupe(s) / {cf.eur(pa_c[1])}, "
                      f"fournisseurs {pa_f[0]} groupe(s) / {cf.eur(pa_f[1])}.")
-    if ind_c or ind_f:
-        notes.append(f"Report à nouveau récent non évalué (ancienneté inconnue) : clients {cf.eur(ind_c)}, fournisseurs {cf.eur(ind_f)}.")
+    if inf_c["an"][0] or inf_f["an"][0]:
+        notes.append(f"À-nouveaux non lettrés non repris (trop anciens) : clients {_pl(inf_c['an'][0], 'ligne')} / {cf.eur(inf_c['an'][1])}, "
+                     f"fournisseurs {_pl(inf_f['an'][0], 'ligne')} / {cf.eur(inf_f['an'][1])}.")
     if illisibles:
         notes.append(f"({illisibles} ligne(s) du FEC illisible(s), ignorée(s).)")
     notes.append(f"Mail complet à copier dans Outlook (à ouvrir dans le navigateur) : {cf.vers_affichage(sortie)}")
@@ -387,6 +422,8 @@ def generer(chemin, date_arrete=None, mois=3, nom_client=None, destinataire=None
     resume = [f"Mail de points en suspens prêt (arrêté au {cf.jj(arrete)}) :"]
     if ops:
         resume.append(f"- Justificatifs manquants : {_pl(len(ops), 'opération')} à justifier, {cf.eur(sum((o['montant'] for o in ops), ZERO))}.")
+    if inf_c["ignore"]:
+        resume.append(f"- Clients non contrôlés ({inf_c['ignore']}).")
     for nom_r, items, tiers, mot, delai_r in (("Factures clients sans règlement", clients, "client", "facture", f" depuis plus de {mois} mois"),
                                               ("Factures fournisseurs non réglées", fourn, "fournisseur", "facture", f" depuis plus de {mois} mois"),
                                               ("Règlements de clients sans facture", sf_c, "client", "règlement", f" depuis plus de {mois} mois"),
