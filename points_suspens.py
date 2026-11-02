@@ -51,8 +51,10 @@ def date_age(l, arrete):
     return pd if pd and pd < d else d
 
 
-MOYENS = re.compile(r"\b(?:cb|c b|cartes? (?:bleue?s?|bancaires?)|especes?|cheques?|caisse|comptoir|divers|tpe|paypal|stripe|sumup|"
-                    r"monetico|virements?|prelevements?|tickets?)\b")
+MOYENS = re.compile(r"\b(?:cb|c b|cartes? (?:bleue?s?|bancaires?)|especes?|cheques?|caisse)\b")
+
+
+DIVERS = re.compile(r"\bdivers\b")
 
 
 def sans_tiers(l):
@@ -60,9 +62,14 @@ def sans_tiers(l):
     return not l["aux"] or l["aux"] == l["cpt"]
 
 
-def moyen_paiement(l):
-    """Tiers client qui est en fait un moyen de paiement ou une caisse (CB, especes, cheques...) : libelle du tiers, a defaut son code."""
-    return bool(MOYENS.search(cle_alpha(l.get("auxlib") or l["aux"])[0]))
+def compte_special(l):
+    """Compte client qui n'est pas un vrai client : compte 411 ou auxiliaire « especes », « CB », « carte bleue », « cheques »,
+    « caisse » (libelle ou code du compte general, libelle ou code de l'auxiliaire), ou « clients divers » (fourre-tout, faute
+    d'information). « Divers » n'est lu sur le compte general que s'il n'y a pas d'auxiliaire : un compte collectif « clients
+    divers » regroupant de vrais clients ne doit pas tout ecarter."""
+    general = cle_alpha(l["cpt"] + " " + l["cptlib"])[0]
+    aux = cle_alpha(l.get("auxlib") or l["aux"])[0]
+    return bool(MOYENS.search(general) or MOYENS.search(aux) or DIVERS.search(aux) or (sans_tiers(l) and DIVERS.search(general)))
 
 
 def ecritures_banque(lignes):
@@ -97,7 +104,7 @@ def points_tiers(lignes, prefixes, sens, arrete, limite, debut, mini, banque, re
       info       : a-nouveaux non lettres ecartes (an), lignes sans compte auxiliaire (sans_aux), tiers ecartes
                    (exclus), nombre de tiers (nb_tiers) et motif si le cote client est ignore (ignore).
     Les a-nouveaux sont toujours ecartes (anciennete inconnue). Cote clients (`clients`) : lignes sans compte auxiliaire et
-    tiers « moyen de paiement » (CB, especes, cheques...) ecartes ; un seul client ou aucun = pas de suivi par tiers, tout est ignore."""
+    comptes « especes », « CB », « cheques », « caisse » ecartes ; un seul client ou aucun = pas de suivi par tiers, tout est ignore."""
     opp = "c" if sens == "d" else "d"
     fact, regl, groupes, tiers = {}, {}, {}, set()
     autres = ZERO
@@ -107,11 +114,11 @@ def points_tiers(lignes, prefixes, sens, arrete, limite, debut, mini, banque, re
             continue
         nom = l.get("auxlib") or l["cptlib"] or l["aux"] or l["cpt"]
         if clients:
+            if compte_special(l):
+                info["exclus"].add(l.get("auxlib") or l["cptlib"] or l["aux"] or l["cpt"])
+                continue
             if sans_tiers(l):
                 info["sans_aux"] += 1
-                continue
-            if moyen_paiement(l):
-                info["exclus"].add(nom)
                 continue
             tiers.add(l["aux"])
         m = l[sens] - l[opp]
@@ -397,7 +404,7 @@ def generer(chemin, date_arrete=None, mois=3, nom_client=None, destinataire=None
     if inf_c["ignore"]:
         notes.append(f"Clients non contrôlés : {inf_c['ignore']} (pas de suivi par client dans ce dossier).")
     if inf_c["exclus"]:
-        notes.append("Comptes clients écartés (moyens de paiement, caisse) : " + ", ".join(sorted(inf_c["exclus"], key=cle_alpha)[:12]) + ".")
+        notes.append("Comptes clients écartés (espèces, CB, chèques, caisse, clients divers) : " + ", ".join(sorted(inf_c["exclus"], key=cle_alpha)[:12]) + ".")
     if inf_c["sans_aux"]:
         notes.append(f"{_pl(inf_c['sans_aux'], 'ligne')} sur le compte client général (411 sans compte auxiliaire) non reprise(s).")
     doubles_c = {x["nom"] for x in clients} & {x["nom"] for x in sf_c}
